@@ -171,6 +171,18 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'img',"courses", 'created_at', 'updated_at']
 
 
+
+class CategoryMainSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Category
+        fields = ['id', 'title', 'img', 'created_at', 'updated_at']
+
+
+class CourseMainSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Course
+        fields = "__all__"
 # -----------------------------
 # COURSE PROGRESS SERIALIZER
 # -----------------------------

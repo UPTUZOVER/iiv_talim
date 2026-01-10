@@ -13,7 +13,7 @@ from main_video.views import (
     VazifaBajarishViewSet,
     VideoViewSet,
     VideoRatingViewSet,
-    CommentViewSet
+    CommentViewSet, CategoryMainViewSet, CourseMainViewSet, UserOneViewSet
 )
 
 router = DefaultRouter()
@@ -30,6 +30,11 @@ router.register(r'missiyas', MissiyaViewSet, basename='missiyas')
 router.register(r'vazifas', VazifaBajarishViewSet, basename='vazifas')
 router.register(r'video-ratings', VideoRatingViewSet, basename='video-ratings')
 router.register(r'comments', CommentViewSet, basename='comments')
+router.register(r"category_main", CategoryMainViewSet, basename='category-main')
+router.register(r"course_main", CourseMainViewSet, basename='cource-main')
+router.register(r"user_one",UserOneViewSet, basename='user-one')
+
+
 
 urlpatterns = [
     path('api/token/', MyTokenObtainPairView.as_view(), name='token_obtain_pair'),

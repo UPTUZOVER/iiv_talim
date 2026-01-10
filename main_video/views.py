@@ -3,17 +3,37 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from main_video.models import *
 from main_video.serializers import MyTokenObtainPairSerializer, UserModelSerializer, \
-    CourseWithProgressSerializer, CategoryWithCoursesSerializer, SectionWithAccessSerializer
+    CourseWithProgressSerializer, CategoryWithCoursesSerializer, SectionWithAccessSerializer, CategoryMainSerializer, \
+    CourseMainSerializer
 from rest_framework.parsers import FormParser, MultiPartParser
 
 
 class MyTokenObtainPairView(TokenObtainPairView):
     serializer_class = MyTokenObtainPairSerializer
 
+
 class UserViewSet(ModelViewSet):
     queryset = Users.objects.all()
     serializer_class = UserModelSerializer
     parser_classes = (FormParser, MultiPartParser)
+
+
+
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import FormParser, MultiPartParser
+
+
+class UserOneViewSet(ModelViewSet):
+    serializer_class = UserModelSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = (FormParser, MultiPartParser)
+
+    def get_queryset(self):
+        if not self.request.user.is_authenticated:
+            return Users.objects.none()
+        return Users.objects.filter(hemis_id=self.request.user.hemis_id)
+
 
 
 from rest_framework import viewsets, permissions
@@ -69,6 +89,51 @@ class CommentViewSet(viewsets.ModelViewSet):
     queryset = Comment.objects.all()
     serializer_class = CommentSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+class CategoryMainViewSet(viewsets.ModelViewSet):
+    queryset = Category.objects.all()
+    serializer_class =CategoryMainSerializer
+import django_filters
+from .models import Course
+
+
+class CourseFilter(django_filters.FilterSet):
+    category = django_filters.NumberFilter(field_name='category_id')
+    teacher = django_filters.NumberFilter(field_name='teacher__id')
+    is_blocked = django_filters.BooleanFilter()
+
+    class Meta:
+        model = Course
+        fields = ['category', 'teacher', 'is_blocked']
+
+from rest_framework import viewsets, filters
+from django_filters.rest_framework import DjangoFilterBackend
+from .models import Course
+from .serializers import CourseMainSerializer
+
+
+
+class CourseMainViewSet(viewsets.ModelViewSet):
+    queryset = Course.objects.all()
+    serializer_class = CourseMainSerializer
+
+    filter_backends = [
+        DjangoFilterBackend,
+        filters.SearchFilter,
+        filters.OrderingFilter,
+    ]
+
+    filterset_class = CourseFilter
+
+    search_fields = [
+        'title',
+        'small_description',
+        'author',
+        'teacher__username',
+    ]
+
+    ordering_fields = ['created_at', 'title']
+    ordering = ['-created_at']
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
