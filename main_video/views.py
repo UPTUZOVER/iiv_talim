@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from main_video.models import *
 from main_video.serializers import MyTokenObtainPairSerializer, UserModelSerializer, \
     CourseWithProgressSerializer, CategoryWithCoursesSerializer, SectionWithAccessSerializer, CategoryMainSerializer, \
-    CourseMainSerializer
+    CourseMainSerializer, SectionOneSerializer, SectionVazifaSerializer, VazifaSerializer
 from rest_framework.parsers import FormParser, MultiPartParser
 
 
@@ -65,11 +65,6 @@ class MissiyaViewSet(viewsets.ModelViewSet):
     queryset = Missiya.objects.all()
     serializer_class = MissiyaSerializer
     # permission_classes = [permissions.IsAuthenticated]
-
-
-class VazifaBajarishViewSet(viewsets.ModelViewSet):
-    queryset = Vazifa_bajarish.objects.all()
-    serializer_class = VazifaBajarishSerializer
 
 class SectionProgressViewSet(viewsets.ModelViewSet):
     queryset = SectionProgress.objects.all()
@@ -338,6 +333,163 @@ class CourseViewSet(viewsets.ModelViewSet):
                 'is_completed': False,
                 'completed_at': None
             })
+
+
+class SectionOneViewSet(viewsets.ModelViewSet):
+    queryset = Section.objects.select_related('course', 'course__category')
+    serializer_class = SectionOneSerializer
+
+    filter_backends = [
+        DjangoFilterBackend,
+        filters.SearchFilter,
+        filters.OrderingFilter,
+    ]
+
+    filterset_fields = {
+        'course': ['exact'],
+        'course__category': ['exact'],
+    }
+
+    search_fields = [
+        'title',
+        'small_description',
+        'course__title',
+        'course__category__title',
+    ]
+
+    ordering_fields = ['order', 'created_at']
+    ordering = ['order']
+
+
+from django.utils import timezone
+
+
+def can_start_vazifalar(user, section):
+    """Section vazifalarini ishlash uchun shart:
+    - Sectiondagi -1 indexdagi video ko‘rilgan bo‘lishi kerak
+    """
+    last_video = Video.objects.filter(section=section).order_by('order').first()
+    if not last_video:
+        return False
+    # user ushbu videoni ko‘rgan bo‘lishi kerak
+    return VideoProgress.objects.filter(user=user, video=last_video, is_completed=True).exists()
+
+
+def update_section_progress(user, section):
+    """Sectiondagi vazifalar progressini hisoblash"""
+    vazifalar = Vazifa_bajarish.objects.filter(missiya__section=section)
+    total_vazifalar = vazifalar.values('missiya').distinct().count()
+
+    if total_vazifalar == 0:
+        return
+
+    approved_scores = vazifalar.filter(user=user, is_approved=True).count()
+    percent = (approved_scores / total_vazifalar) * 100
+
+    section_progress, _ = SectionProgress.objects.get_or_create(user=user, section=section)
+    section_progress.score_percent = percent
+    section_progress.is_completed = percent >= 80
+    if section_progress.is_completed and not section_progress.completed_at:
+        section_progress.completed_at = timezone.now()
+    section_progress.save()
+
+    # keyingi sectionni ochish
+    if section_progress.is_completed:
+        next_section = Section.objects.filter(course=section.course, order__gt=section.order).order_by('order').first()
+        if next_section:
+            next_section.is_blocked = False
+            next_section.save()
+
+
+
+
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+class SectionVazifaViewSet(viewsets.ModelViewSet):
+    queryset = Section.objects.all()
+    serializer_class = SectionVazifaSerializer
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=True, methods=['get'])
+    def vazifalar(self, request, pk=None):
+        """Sectiondagi vazifalarni olish"""
+        section = self.get_object()
+
+        if not can_start_vazifalar(request.user, section):
+            return Response({"error": "Vazifalarni ishlash uchun avval videoni ko‘rishingiz kerak."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        serializer = self.get_serializer(section)
+        return Response(serializer.data)
+
+
+class VazifaBajarishViewSet(viewsets.ModelViewSet):
+    queryset = Vazifa_bajarish.objects.all()
+    serializer_class = VazifaBajarishSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        """User vazifa javobini yuboradi"""
+        data = request.data.copy()
+        data['user'] = request.user.id
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        # section progressni yangilash
+        section = serializer.instance.missiya.section
+        update_section_progress(request.user, section)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Admin vazifani tasdiqlaydi"""
+        vazifa = self.get_object()
+        if request.user.role != 'admin':
+            return Response({"error": "Faqat admin tasdiqlashi mumkin"}, status=status.HTTP_403_FORBIDDEN)
+
+        score = request.data.get('score', 0)
+        is_approved = request.data.get('is_approved', True)
+
+        vazifa.score = score
+        vazifa.is_approved = is_approved
+        vazifa.save()
+
+        # section progressni yangilash
+        section = vazifa.missiya.section
+        update_section_progress(vazifa.user, section)
+
+        return Response({"success": True, "score": vazifa.score, "is_approved": vazifa.is_approved})
+class AdminVazifaApproveViewSet(viewsets.ModelViewSet):
+    queryset = Vazifa_bajarish.objects.all()
+    serializer_class = VazifaSerializer
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        submission = self.get_object()
+        score = request.data.get('score', 0)
+        is_approved = request.data.get('is_approved', True)
+
+        submission.is_approved = is_approved
+        submission.score = score
+        submission.save()
+
+        # Section progressni tekshirish
+        section = submission.missiya.section
+        total = section.missiya_set.count() * 1  # har bir missiya uchun 1 ball (yoki foiz)
+        approved = Vazifa_bajarish.objects.filter(
+            missiya__section=section,
+            user=submission.user,
+            is_approved=True
+        ).count()
+
+        percent = (approved / total) * 100
+        if percent >= 80:
+            section.unlock_next_section()
+
+        return Response({'success': True, 'percent_completed': percent})
 
 
 # videolarni kurilgan qilib order bilan qilish kerak

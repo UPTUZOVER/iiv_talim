@@ -123,20 +123,19 @@ class Missiya(models.Model):
 
 
 
-
 class Vazifa_bajarish(models.Model):
-    file = models.FileField(upload_to='videos/')
+    file = models.FileField(upload_to='vazifalar/', null=True, blank=True)
     description = models.TextField(null=True, blank=True)
-    is_approved = models.BooleanField(default=False)
+    score = models.PositiveSmallIntegerField(default=0)  # admin beradi
+    is_approved = models.BooleanField(default=False)  # admin tekshiradi
 
-    missiya = models.ForeignKey( Missiya, on_delete=models.CASCADE)
-    user = models.ForeignKey( Users, on_delete=models.CASCADE)
+    missiya = models.ForeignKey(Missiya, on_delete=models.CASCADE)
+    user = models.ForeignKey(Users, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-
     def __str__(self):
-        return f"{self.text[10]} - {self.user.hemis_id}"
+        return f"{self.description[:20]} - {self.user.hemis_id}"
 
 
 class SectionProgress(models.Model):
@@ -144,6 +143,7 @@ class SectionProgress(models.Model):
     section = models.ForeignKey(Section, on_delete=models.CASCADE)
     is_completed = models.BooleanField(default=False)
     completed_at = models.DateTimeField(null=True, blank=True)
+    score_percent = models.FloatField(default=0)  # sectiondagi vazifalar foizi
 
 
 # models.py ga qo'shimcha metodlar (Video modeliga)

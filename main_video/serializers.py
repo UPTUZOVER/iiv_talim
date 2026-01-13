@@ -49,18 +49,12 @@ from .models import (
 )
 
 
-# -----------------------------
-# GROUP SERIALIZER
-# -----------------------------
 class GroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = Group
         fields = ['id', 'name']
 
 
-# -----------------------------
-# USER SERIALIZER
-# -----------------------------
 class UserSerializer(serializers.ModelSerializer):
     group = GroupSerializer(read_only=True)
 
@@ -69,14 +63,6 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'hemis_id', 'first_name', 'last_name', 'role', 'group']
 
 
-# -----------------------------
-# CATEGORY SERIALIZER
-# -----------------------------
-
-
-# -----------------------------
-# VIDEO SERIALIZER
-# -----------------------------
 class VideoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Video
@@ -86,9 +72,6 @@ class VideoSerializer(serializers.ModelSerializer):
         ]
 
 
-# -----------------------------
-# COMMENT SERIALIZER
-# -----------------------------
 class CommentSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
 
@@ -97,9 +80,6 @@ class CommentSerializer(serializers.ModelSerializer):
         fields = ['id', 'user', 'comment', 'created_at', 'updated_at']
 
 
-# -----------------------------
-# VIDEO RATING SERIALIZER
-# -----------------------------
 class VideoRatingSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
 
@@ -108,20 +88,20 @@ class VideoRatingSerializer(serializers.ModelSerializer):
         fields = ['id', 'video', 'user', 'rating', 'created_at', 'updated_at']
 
 
-# -----------------------------
-# VAZIFA BAJARISH SERIALIZER
-# -----------------------------
 class VazifaBajarishSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-
     class Meta:
         model = Vazifa_bajarish
-        fields = ['id', 'file', 'description', 'user', 'missiya', 'created_at', 'updated_at']
+        fields = ['id', 'file', 'description', 'score', 'is_approved', 'missiya', 'user', 'created_at']
 
 
-# -----------------------------
-# MISSIYA SERIALIZER
-# -----------------------------
+class SectionVazifaSerializer(serializers.ModelSerializer):
+    vazifalar = VazifaBajarishSerializer(source='vazifa_bajarish_set', many=True, read_only=True)
+
+    class Meta:
+        model = Section
+        fields = ['id', 'title', 'course', 'small_description', 'is_blocked', 'vazifalar']
+
+
 class MissiyaSerializer(serializers.ModelSerializer):
     vazifalar = VazifaBajarishSerializer(source='vazifa_bajarish_set', many=True, read_only=True)
 
@@ -130,9 +110,6 @@ class MissiyaSerializer(serializers.ModelSerializer):
         fields = ['id', 'description', 'file', 'vazifalar']
 
 
-# -----------------------------
-# SECTION SERIALIZER
-# -----------------------------
 class SectionSerializer(serializers.ModelSerializer):
     videos = VideoSerializer(source='video_set', many=True, read_only=True)
     missiyalar = MissiyaSerializer(source='missiya_set', many=True, read_only=True)
@@ -208,9 +185,7 @@ class SectionProgressSerializer(serializers.ModelSerializer):
         fields = ['id', 'user', 'section', 'is_completed', 'completed_at']
 
 
-# -----------------------------
-# VIDEO PROGRESS SERIALIZER
-# -----------------------------
+
 class VideoProgressSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
     video = VideoSerializer(source='Section',
@@ -400,3 +375,21 @@ class CategoryWithCoursesSerializer(serializers.ModelSerializer):
             context={'request': request}  # request null bo'lsa ham ok, progress=0 bo'ladi
         )
         return serializer.data
+
+class SectionOneSerializer(serializers.ModelSerializer):
+    videos = VideosSerializer(source='video_set',many=True, read_only=True)
+
+    category_id = serializers.IntegerField(
+        source='course.category_id',
+        read_only=True
+    )
+
+    class Meta:
+        model = Section
+        fields = ["id","category_id", "title","course", "order","small_description", "is_blocked","videos"]
+
+
+class VazifaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Vazifa_bajarish
+        fields = ['id', 'missiya', 'description', 'file', 'is_approved', 'score']
