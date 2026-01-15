@@ -24,3 +24,6 @@ sfd.py
 .env
 __pycache__/
 media/
+
+db.sqlite3
+

@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from main_video.models import *
 from main_video.serializers import MyTokenObtainPairSerializer, UserModelSerializer, \
     CourseWithProgressSerializer, CategoryWithCoursesSerializer, SectionWithAccessSerializer, CategoryMainSerializer, \
-    CourseMainSerializer, SectionOneSerializer, SectionVazifaSerializer, VazifaSerializer
+     SectionOneSerializer, SectionVazifaSerializer, VazifaSerializer, VideoProgressSerializer
 from rest_framework.parsers import FormParser, MultiPartParser
 
 
@@ -408,7 +408,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-class SectionVazifaViewSet(viewsets.ModelViewSet):
+class SectionVazifasViewSet(viewsets.ModelViewSet):
     queryset = Section.objects.all()
     serializer_class = SectionVazifaSerializer
     permission_classes = [IsAuthenticated]
@@ -462,6 +462,9 @@ class VazifaBajarishViewSet(viewsets.ModelViewSet):
         update_section_progress(vazifa.user, section)
 
         return Response({"success": True, "score": vazifa.score, "is_approved": vazifa.is_approved})
+
+
+
 class AdminVazifaApproveViewSet(viewsets.ModelViewSet):
     queryset = Vazifa_bajarish.objects.all()
     serializer_class = VazifaSerializer
@@ -491,5 +494,8 @@ class AdminVazifaApproveViewSet(viewsets.ModelViewSet):
 
         return Response({'success': True, 'percent_completed': percent})
 
-
+class VideoProgresViews(viewsets.ModelViewSet):
+    queryset = VideoProgress.objects.all()
+    serializer_class = VideoProgressSerializer
+    permission_classes = [IsAuthenticated]
 # videolarni kurilgan qilib order bilan qilish kerak

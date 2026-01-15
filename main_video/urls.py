@@ -1,5 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+
 from main_video.views import (
     MyTokenObtainPairView,
     UserViewSet,
@@ -13,8 +14,8 @@ from main_video.views import (
     VazifaBajarishViewSet,
     VideoViewSet,
     VideoRatingViewSet,
-    CommentViewSet, CategoryMainViewSet, CourseMainViewSet, UserOneViewSet, SectionOneViewSet, SectionVazifaViewSet,
-    AdminVazifaApproveViewSet
+    CommentViewSet, CategoryMainViewSet, CourseMainViewSet, UserOneViewSet, SectionOneViewSet,
+    AdminVazifaApproveViewSet, SectionVazifasViewSet
 )
 
 router = DefaultRouter()
@@ -35,10 +36,10 @@ router.register(r"category_main", CategoryMainViewSet, basename='category-main')
 router.register(r"course_main", CourseMainViewSet, basename='cource-main')
 router.register(r"user_one",UserOneViewSet, basename='user-one')
 router.register(r'section_one', SectionOneViewSet, basename='SectionOneViewSet')
-router.register(r'sections', SectionVazifaViewSet, basename='sections')
-router.register(r'vazifalar', VazifaBajarishViewSet, basename='vazifalar')
+router.register(r'sections', SectionVazifasViewSet, basename='vazifalar_sections')
+router.register(r'vazifalar_sec', VazifaBajarishViewSet, basename='vazif')
 router.register(r'admin-vazifalar', AdminVazifaApproveViewSet, basename='admin-vazifalar')
-
+router.register("video_progres",VideoViewSet, basename='video_progres')
 
 
 
