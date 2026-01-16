@@ -415,22 +415,20 @@ class CourseWithProgressSerializer(serializers.ModelSerializer):
 
     def get_average_video_rating(self, obj):
         """Kursdagi barcha videolarning o'rtacha ratingini hisoblash"""
-        # Kursga tegishli barcha videolar
         videos = Video.objects.filter(section__course=obj)
-        avg = videos.aggregate(avg_rating=Avg('videorating__rating'))['avg_rating']
+        avg = videos.aggregate(avg_rating=Avg('ratings__rating'))['avg_rating']  # ✅ 'videorating' → 'ratings'
         if avg is None:
             return 0
         return round(avg, 2)
 
-
 class CategoryWithCoursesSerializer(serializers.ModelSerializer):
-    """Kategoriya va kurslari"""
     courses = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()  # 🆕 qo‘shildi
 
     class Meta:
         model = Category
         fields = [
-            'id', 'title', 'img', 'courses', 'created_at', 'updated_at'
+            'id', 'title', 'img', 'courses', 'average_rating', 'created_at', 'updated_at'
         ]
 
     def get_courses(self, obj):
@@ -443,6 +441,13 @@ class CategoryWithCoursesSerializer(serializers.ModelSerializer):
             context={'request': request}
         )
         return serializer.data
+
+    def get_average_rating(self, obj):
+        videos = Video.objects.filter(section__course__category=obj)
+        avg = videos.aggregate(avg_rating=Avg('ratings__rating'))['avg_rating']
+        if avg is None:
+            return 0
+        return round(avg, 2)
 
 
 
