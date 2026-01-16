@@ -1,3 +1,4 @@
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.viewsets import ModelViewSet
 from rest_framework_simplejwt.views import TokenObtainPairView
 
@@ -44,7 +45,7 @@ from .models import (
 )
 from .serializers import (
     GroupSerializer, CourseProgressSerializer, MissiyaSerializer, VazifaBajarishSerializer, SectionProgressSerializer,
-    VideoRatingSerializer, CommentSerializer
+    VideoRatingSerializer
 )
 
 class GroupViewSet(viewsets.ModelViewSet):
@@ -74,16 +75,6 @@ class SectionProgressViewSet(viewsets.ModelViewSet):
 
 from rest_framework import viewsets
 
-class VideoRatingViewSet(viewsets.ModelViewSet):
-    queryset = VideoRating.objects.all()
-    serializer_class = VideoRatingSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-
-class CommentViewSet(viewsets.ModelViewSet):
-    queryset = Comment.objects.all()
-    serializer_class = CommentSerializer
-    permission_classes = [permissions.IsAuthenticated]
 
 class CategoryMainViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -263,36 +254,27 @@ class VideoViewSet(viewsets.ModelViewSet):
             course_progress.completed_at = timezone.now()
         course_progress.save()
 
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
 class SectionViewSet(viewsets.ModelViewSet):
     queryset = Section.objects.all()
     serializer_class = SectionWithAccessSerializer
-
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
+    permission_classes = [IsAuthenticated]
 
     @action(detail=True, methods=['get'])
     def videos_with_access(self, request, pk=None):
         section = self.get_object()
-        videos = Video.objects.filter(section=section).order_by('order')
+        videos = Video.objects.filter(section=section).order_by('order')  # order bo'yicha
 
         result = []
         for video in videos:
             has_access = video.check_video_access(request.user)
-            user_progress = None
-
-            try:
-                progress = VideoProgress.objects.get(
-                    user=request.user,
-                    video=video
-                )
-                user_progress = {
-                    'is_completed': progress.is_completed,
-                    'completed_at': progress.completed_at
-                }
-            except VideoProgress.DoesNotExist:
-                user_progress = {'is_completed': False, 'completed_at': None}
+            progress = VideoProgress.objects.filter(user=request.user, video=video).first()
+            user_progress = {
+                'is_completed': progress.is_completed if progress else False,
+                'completed_at': progress.completed_at if progress else None
+            }
 
             result.append({
                 'id': video.id,
@@ -305,6 +287,7 @@ class SectionViewSet(viewsets.ModelViewSet):
             })
 
         return Response(result)
+
 
 
 class CourseViewSet(viewsets.ModelViewSet):
@@ -499,3 +482,50 @@ class VideoProgresViews(viewsets.ModelViewSet):
     serializer_class = VideoProgressSerializer
     permission_classes = [IsAuthenticated]
 # videolarni kurilgan qilib order bilan qilish kerak
+
+
+
+class CommentPagination(PageNumberPagination):
+    page_size = 10 # har bir sahifada 5 comment
+    page_size_query_param = 'page_size'  # foydalanuvchi ?page_size=10 bilan o'zgartirishi mumkin
+    max_page_size = 50
+
+from rest_framework import viewsets, permissions
+from main_video.models import Comment, VideoRating
+from main_video.serializers import CommentSerializer, VideoRatingSerializer
+
+
+class CommentViewSet(viewsets.ModelViewSet):
+    queryset = Comment.objects.all().order_by('-created_at')
+    serializer_class = CommentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CommentPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['video']
+
+
+
+class RatingPagination(PageNumberPagination):
+    page_size = 5
+    page_size_query_param = 'page_size'
+    max_page_size = 50
+
+
+
+class VideoRatingViewSet(viewsets.ModelViewSet):
+    queryset = VideoRating.objects.all()
+    serializer_class = VideoRatingSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = RatingPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['video']
+
+
+
+
+
+
+
+
+
+

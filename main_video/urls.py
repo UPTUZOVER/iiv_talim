@@ -30,17 +30,16 @@ router.register(r'course-progress', CourseProgressViewSet, basename='course-prog
 router.register(r'section-progress', SectionProgressViewSet, basename='section-progress')
 router.register(r'missiyas', MissiyaViewSet, basename='missiyas')
 router.register(r'vazifas', VazifaBajarishViewSet, basename='vazifas')
-router.register(r'video-ratings', VideoRatingViewSet, basename='video-ratings')
-router.register(r'comments', CommentViewSet, basename='comments')
 router.register(r"category_main", CategoryMainViewSet, basename='category-main')
 router.register(r"course_main", CourseMainViewSet, basename='cource-main')
 router.register(r"user_one",UserOneViewSet, basename='user-one')
 router.register(r'section_one', SectionOneViewSet, basename='SectionOneViewSet')
-router.register(r'sections', SectionVazifasViewSet, basename='vazifalar_sections')
-router.register(r'vazifalar_sec', VazifaBajarishViewSet, basename='vazif')
+router.register(r'section_vazifalar', SectionVazifasViewSet, basename='vazifalar_sections')
 router.register(r'admin-vazifalar', AdminVazifaApproveViewSet, basename='admin-vazifalar')
 router.register("video_progres",VideoViewSet, basename='video_progres')
 
+router.register(r'comments', CommentViewSet, basename='comments')
+router.register(r'ratings', VideoRatingViewSet, basename='rating    ')
 
 
 urlpatterns = [

@@ -12,7 +12,6 @@ from main_video.models import (
     VideoRating,
     Missiya,
     Vazifa_bajarish,
-    Comment,
     Group
 )
 
@@ -63,6 +62,58 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'hemis_id', 'first_name', 'last_name', 'role', 'group']
 
 
+
+
+
+
+
+
+from rest_framework import serializers
+from main_video.models import Video, Comment, VideoRating, Users
+
+class CommentSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField(read_only=True)  # userni hemid ko‘rsatadi
+
+    class Meta:
+        model = Comment
+        fields = ['id', 'user', 'video', 'comment', 'created_at']
+        read_only_fields = ['id', 'user', 'created_at']
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        validated_data['user'] = request.user
+        return super().create(validated_data)
+
+
+class VideoRatingSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = VideoRating
+        fields = ['id', 'user', 'video', 'rating', 'created_at']
+        read_only_fields = ['id', 'user', 'created_at']
+
+    def validate_rating(self, value):
+        if not (1 <= value <= 5):
+            raise serializers.ValidationError("Rating 1 dan 5 gacha bo‘lishi kerak")
+        return value
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        user = request.user
+        video = validated_data['video']
+
+        # Agar user oldin rating bergan bo‘lsa, update qilamiz
+        obj, created = VideoRating.objects.update_or_create(
+            user=user,
+            video=video,
+            defaults={'rating': validated_data['rating']}
+        )
+        return obj
+
+
+
+
 class VideoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Video
@@ -71,35 +122,25 @@ class VideoSerializer(serializers.ModelSerializer):
             'is_blocked', 'order', 'created_at', 'updated_at'
         ]
 
-
-class CommentSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-
-    class Meta:
-        model = Comment
-        fields = ['id', 'user', 'comment', 'created_at', 'updated_at']
-
-
-class VideoRatingSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-
-    class Meta:
-        model = VideoRating
-        fields = ['id', 'video', 'user', 'rating', 'created_at', 'updated_at']
-
-
 class VazifaBajarishSerializer(serializers.ModelSerializer):
     class Meta:
         model = Vazifa_bajarish
         fields = ['id', 'file', 'description', 'score', 'is_approved', 'missiya', 'user', 'created_at']
 
+class Missiyas(serializers.ModelSerializer):
+    vazifalar = VazifaBajarishSerializer(many=True, read_only=True)  # related_name='vazifalar'
+
+    class Meta:
+        model = Missiya
+        fields = ['id', 'description', 'file', 'vazifalar']
 
 class SectionVazifaSerializer(serializers.ModelSerializer):
-    vazifalar = VazifaBajarishSerializer(source='vazifa_bajarish_set', many=True, read_only=True)
+    missiyas = Missiyas(many=True, read_only=True)  # related_name='missiyas'
 
     class Meta:
         model = Section
-        fields = ['id', 'title', 'course', 'small_description', 'is_blocked', 'vazifalar']
+        fields = ['id', 'title', 'course', 'small_description', 'is_blocked', 'missiyas']
+
 
 
 class MissiyaSerializer(serializers.ModelSerializer):
@@ -108,6 +149,14 @@ class MissiyaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Missiya
         fields = ['id', 'description', 'file', 'vazifalar']
+
+
+
+class MissiyaOneSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Missiya
+        fields = ['id', 'description', 'file'   ]
 
 
 class SectionSerializer(serializers.ModelSerializer):
@@ -209,9 +258,12 @@ class VideoAccessSerializer(serializers.Serializer):
 
 
 
+from django.db.models import Avg
+
 class VideosSerializer(serializers.ModelSerializer):
     is_accessible = serializers.SerializerMethodField()
     user_progress = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()  # 🆕 yangi field
 
     class Meta:
         model = Video
@@ -222,27 +274,20 @@ class VideosSerializer(serializers.ModelSerializer):
             'section',
             'small_description',
             'order',
-            'is_accessible',      # 🔑 FRONTEND SHUNI TEKSHIRADI
-            'user_progress',      # progress info
+            'is_accessible',
+            'user_progress',
+            'average_rating',     # 🆕 qo‘shildi
             'created_at',
             'updated_at'
         ]
 
     def get_is_accessible(self, obj):
-        """
-        Video user uchun ochiqmi yoki yo‘qmi
-        FAqat VideoProgress + check_video_access orqali
-        """
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return False
-
         return obj.check_video_access(request.user)
 
     def get_user_progress(self, obj):
-        """
-        Userning shu videodagi holati
-        """
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return {
@@ -265,6 +310,18 @@ class VideosSerializer(serializers.ModelSerializer):
             'is_completed': progress.is_completed,
             'completed_at': progress.completed_at
         }
+
+    def get_average_rating(self, obj):
+        """
+        Video uchun barcha ratinglarning o'rtachasi
+        """
+        avg = VideoRating.objects.filter(video=obj).aggregate(avg_rating=Avg('rating'))['avg_rating']
+        if avg is None:
+            return 0  # agar hali rating berilmagan bo'lsa
+        return round(avg, 2)  # 2 ta onlik raqam bilan
+
+
+
 
 class SectionWithAccessSerializer(serializers.ModelSerializer):
     """User uchun bo'limdagi videolarni access bilan"""
@@ -310,11 +367,13 @@ class SectionWithAccessSerializer(serializers.ModelSerializer):
         """Jami videolar soni"""
         return Video.objects.filter(section=obj).count()
 
+from django.db.models import Avg
 
 class CourseWithProgressSerializer(serializers.ModelSerializer):
-    """Kursni progress bilan birga"""
+    """Kursni progress bilan birga, videolar o'rtacha rating bilan"""
     sections = serializers.SerializerMethodField()
     total_progress = serializers.SerializerMethodField()
+    average_video_rating = serializers.SerializerMethodField()  # 🆕 yangi field
     teacher = UserSerializer(many=True, read_only=True)
 
     class Meta:
@@ -322,7 +381,8 @@ class CourseWithProgressSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'teacher', 'category', 'img', 'author',
             'video', 'is_blocked', 'small_description', 'sections',
-            'total_progress', 'created_at', 'updated_at'
+            'total_progress', 'average_video_rating',  # 🆕 qo‘shildi
+            'created_at', 'updated_at'
         ]
 
     def get_sections(self, obj):
@@ -353,6 +413,15 @@ class CourseWithProgressSerializer(serializers.ModelSerializer):
                 return 0
         return 0
 
+    def get_average_video_rating(self, obj):
+        """Kursdagi barcha videolarning o'rtacha ratingini hisoblash"""
+        # Kursga tegishli barcha videolar
+        videos = Video.objects.filter(section__course=obj)
+        avg = videos.aggregate(avg_rating=Avg('videorating__rating'))['avg_rating']
+        if avg is None:
+            return 0
+        return round(avg, 2)
+
 
 class CategoryWithCoursesSerializer(serializers.ModelSerializer):
     """Kategoriya va kurslari"""
@@ -368,16 +437,19 @@ class CategoryWithCoursesSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         courses = Course.objects.filter(category=obj)
 
-        # Kurslarni barcha foydalanuvchilar uchun chiqaramiz
         serializer = CourseWithProgressSerializer(
             courses,
             many=True,
-            context={'request': request}  # request null bo'lsa ham ok, progress=0 bo'ladi
+            context={'request': request}
         )
         return serializer.data
 
+
+
+
 class SectionOneSerializer(serializers.ModelSerializer):
     videos = VideosSerializer(source='video_set',many=True, read_only=True)
+    missiyalar = MissiyaOneSerializer(source='missiya_set', many=True, read_only=True)
 
     category_id = serializers.IntegerField(
         source='course.category_id',
@@ -386,10 +458,11 @@ class SectionOneSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Section
-        fields = ["id","category_id", "title","course", "order","small_description", "is_blocked","videos"]
+        fields = ["id","category_id", "title","course", "order","small_description", "is_blocked","videos","missiyalar"]
 
 
 class VazifaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Vazifa_bajarish
-        fields = ['id', 'missiya', 'description', 'file', 'is_approved', 'score']
+        fields = ['id', 'missiya', "user",'description', 'file', 'is_approved', 'score']
+

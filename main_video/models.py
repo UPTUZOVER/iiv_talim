@@ -115,27 +115,20 @@ class Section(models.Model):
     class Meta:
         ordering = ['order']
 
-
 class Missiya(models.Model):
-    section = models.ForeignKey(Section, on_delete=models.CASCADE)
+    section = models.ForeignKey(Section, on_delete=models.CASCADE, related_name='missiyas')
     description = models.TextField(null=True, blank=True)
     file = models.FileField(upload_to='missiya/', null=True, blank=True)
-
-
 
 class Vazifa_bajarish(models.Model):
     file = models.FileField(upload_to='vazifalar/', null=True, blank=True)
     description = models.TextField(null=True, blank=True)
-    score = models.PositiveSmallIntegerField(default=0)  # admin beradi
-    is_approved = models.BooleanField(default=False)  # admin tekshiradi
-
-    missiya = models.ForeignKey(Missiya, on_delete=models.CASCADE)
+    score = models.PositiveSmallIntegerField(default=0)
+    is_approved = models.BooleanField(default=False)
+    missiya = models.ForeignKey(Missiya, on_delete=models.CASCADE, related_name='vazifalar')
     user = models.ForeignKey(Users, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"{self.description[:20]} - {self.user.hemis_id}"
 
 
 class SectionProgress(models.Model):
