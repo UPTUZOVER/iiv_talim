@@ -40,11 +40,17 @@ router.register("video_progres",VideoViewSet, basename='video_progres')
 
 router.register(r'comments', CommentViewSet, basename='comments')
 router.register(r'ratings', VideoRatingViewSet, basename='rating    ')
+from django.urls import re_path
+from . import consumers
 
+websocket_urlpatterns = [
+    re_path(r'ws/comments/(?P<video_id>\d+)/$', consumers.CommentConsumer.as_asgi()),
+]
 
 urlpatterns = [
     path('api/token/', MyTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/', include(router.urls)),
+
 ]
 
 

@@ -257,13 +257,11 @@ class VideoAccessSerializer(serializers.Serializer):
     next_video_id = serializers.IntegerField(required=False)
 
 
-
-from django.db.models import Avg
-
 class VideosSerializer(serializers.ModelSerializer):
     is_accessible = serializers.SerializerMethodField()
     user_progress = serializers.SerializerMethodField()
-    average_rating = serializers.SerializerMethodField()  # 🆕 yangi field
+    average_rating = serializers.SerializerMethodField()
+    user_rating = serializers.SerializerMethodField()   # 🆕 qo‘shildi
 
     class Meta:
         model = Video
@@ -276,17 +274,20 @@ class VideosSerializer(serializers.ModelSerializer):
             'order',
             'is_accessible',
             'user_progress',
-            'average_rating',     # 🆕 qo‘shildi
+            'average_rating',
+            'user_rating',     # 🆕 qo‘shildi
             'created_at',
             'updated_at'
         ]
 
+    # 🔓 Video ochiq yoki yopiq
     def get_is_accessible(self, obj):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return False
         return obj.check_video_access(request.user)
 
+    # 📊 User progress
     def get_user_progress(self, obj):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
@@ -311,16 +312,19 @@ class VideosSerializer(serializers.ModelSerializer):
             'completed_at': progress.completed_at
         }
 
+    # ⭐ O‘rtacha rating
     def get_average_rating(self, obj):
-        """
-        Video uchun barcha ratinglarning o'rtachasi
-        """
         avg = VideoRating.objects.filter(video=obj).aggregate(avg_rating=Avg('rating'))['avg_rating']
-        if avg is None:
-            return 0  # agar hali rating berilmagan bo'lsa
-        return round(avg, 2)  # 2 ta onlik raqam bilan
+        return round(avg, 2) if avg else 0
 
+    # 👤 USERNING O‘ZI BERGAN RATING
+    def get_user_rating(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return 0
 
+        rating = VideoRating.objects.filter(video=obj, user=request.user).first()
+        return rating.rating if rating else 0
 
 
 class SectionWithAccessSerializer(serializers.ModelSerializer):
@@ -453,8 +457,8 @@ class CategoryWithCoursesSerializer(serializers.ModelSerializer):
 
 
 class SectionOneSerializer(serializers.ModelSerializer):
-    videos = VideosSerializer(source='video_set',many=True, read_only=True)
-    missiyalar = MissiyaOneSerializer(source='missiya_set', many=True, read_only=True)
+    videos = VideosSerializer(source='video_set', many=True, read_only=True)
+    missiyalar = MissiyaOneSerializer(source='missiyas', many=True, read_only=True)  # ✅ FIX
 
     category_id = serializers.IntegerField(
         source='course.category_id',
@@ -463,7 +467,17 @@ class SectionOneSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Section
-        fields = ["id","category_id", "title","course", "order","small_description", "is_blocked","videos","missiyalar"]
+        fields = [
+            "id",
+            "category_id",
+            "title",
+            "course",
+            "order",
+            "small_description",
+            "is_blocked",
+            "videos",
+            "missiyalar"
+        ]
 
 
 class VazifaSerializer(serializers.ModelSerializer):

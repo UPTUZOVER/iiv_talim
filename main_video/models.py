@@ -31,13 +31,11 @@ class Users(AbstractUser):
     USERNAME_FIELD = 'hemis_id'
     REQUIRED_FIELDS = ['username']  # login qilish uchun boshqa required field
 
-    def __str__(self):
+    def  __str__(self):
         return f"{self.hemis_id} ({self.role})"
 
 
-# ----------------------------
-# Category & Course
-# ----------------------------
+
 class Category(models.Model):
     title = models.CharField(max_length=255)
     img = models.ImageField(upload_to="category/", null=True, blank=True)
@@ -82,9 +80,7 @@ class CourseProgress(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
 
 
-# ----------------------------
-# Section & SectionProgress
-# ----------------------------
+
 class Section(models.Model):
     title = models.CharField(max_length=255)
     course = models.ForeignKey(Course, on_delete=models.CASCADE)
@@ -116,9 +112,7 @@ class SectionProgress(models.Model):
     score_percent = models.FloatField(default=0)
 
 
-# ----------------------------
-# Missiya & Vazifa
-# ----------------------------
+
 class Missiya(models.Model):
     section = models.ForeignKey(Section, on_delete=models.CASCADE, related_name='missiyas')
     description = models.TextField(null=True, blank=True)
@@ -136,9 +130,7 @@ class Vazifa_bajarish(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 
-# ----------------------------
-# Video & VideoProgress & VideoRating
-# ----------------------------
+
 class Video(models.Model):
     title = models.CharField(max_length=255)
     video_file = models.FileField(upload_to='videos/')
@@ -214,9 +206,9 @@ class VideoRating(models.Model):
         return f"{self.video.title} - {self.rating} ⭐"
 
 
-# ----------------------------
-# Comment
-# ----------------------------
+
+
+
 class Comment(models.Model):
     user = models.ForeignKey(Users, on_delete=models.CASCADE)
     video = models.ForeignKey(Video, on_delete=models.CASCADE, related_name='comments')

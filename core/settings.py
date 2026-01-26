@@ -42,6 +42,8 @@ INSTALLED_APPS = [
     'drf_yasg',       # Swagger
     'corsheaders',    # CORS
     'django_filters',
+    'channels',
+    'main_video',
 
     # My apps
     'main_video',
@@ -63,6 +65,15 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [("127.0.0.1", 6379)],
+        },
+    },
+}
 # ----------------------------
 # URL & Templates
 # ----------------------------
