@@ -1,13 +1,31 @@
-from rest_framework.pagination import PageNumberPagination
+from rest_framework import status, filters
+from rest_framework.decorators import action
 from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.pagination import PageNumberPagination
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from main_video.models import *
-from main_video.serializers import MyTokenObtainPairSerializer, UserModelSerializer, \
-    CourseWithProgressSerializer, CategoryWithCoursesSerializer, SectionWithAccessSerializer, CategoryMainSerializer, \
-     SectionOneSerializer, SectionVazifaSerializer, VazifaSerializer, VideoProgressSerializer
-from rest_framework.parsers import FormParser, MultiPartParser
+from django_filters.rest_framework import DjangoFilterBackend
 
+import math
+
+from main_video.models import *
+from main_video.serializers import (
+    MyTokenObtainPairSerializer,
+    UserModelSerializer,
+    CourseWithProgressSerializer,
+    CategoryWithCoursesSerializer,
+    SectionWithAccessSerializer,
+    CategoryMainSerializer,
+    SectionOneSerializer,
+    SectionVazifaSerializer,
+    VazifaSerializer,
+    VideoProgressSerializer,
+    CommentSerializer
+)
+
+from .serializers import VideosSerializer, VideoAccessSerializer, CourseMainSerializer
 
 class MyTokenObtainPairView(TokenObtainPairView):
     serializer_class = MyTokenObtainPairSerializer
@@ -19,10 +37,6 @@ class UserViewSet(ModelViewSet):
     parser_classes = (FormParser, MultiPartParser)
 
 
-
-from rest_framework.viewsets import ModelViewSet
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import FormParser, MultiPartParser
 
 
 class UserOneViewSet(ModelViewSet):
@@ -92,11 +106,6 @@ class CourseFilter(django_filters.FilterSet):
         model = Course
         fields = ['category', 'teacher', 'is_blocked']
 
-from rest_framework import viewsets, filters
-from django_filters.rest_framework import DjangoFilterBackend
-from .models import Course
-from .serializers import CourseMainSerializer
-
 
 
 class CourseMainViewSet(viewsets.ModelViewSet):
@@ -132,15 +141,6 @@ class CategoryViewSet(viewsets.ModelViewSet):
         context['request'] = self.request
         return context
 
-
-from rest_framework import viewsets, permissions, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from django.utils import timezone
-import math
-
-from .models import Video, VideoProgress, SectionProgress, CourseProgress, Section
-from .serializers import VideosSerializer, VideoAccessSerializer
 
 class VideoViewSet(viewsets.ModelViewSet):
     queryset = Video.objects.all()
@@ -317,32 +317,93 @@ class CourseViewSet(viewsets.ModelViewSet):
                 'completed_at': None
             })
 
+# main_video/views.py
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
+from rest_framework.permissions import IsAuthenticated
+
+from main_video.models import Section, Quiz, Video, VideoProgress, QuizResult, SectionProgress
+from main_video.serializers import SectionOneSerializer, QuizSubmitSerializer, QuizSerializer
+
 
 class SectionOneViewSet(viewsets.ModelViewSet):
     queryset = Section.objects.select_related('course', 'course__category')
     serializer_class = SectionOneSerializer
 
-    filter_backends = [
-        DjangoFilterBackend,
-        filters.SearchFilter,
-        filters.OrderingFilter,
-    ]
-
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = {
         'course': ['exact'],
         'course__category': ['exact'],
     }
-
-    search_fields = [
-        'title',
-        'small_description',
-        'course__title',
-        'course__category__title',
-    ]
-
+    search_fields = ['title', 'small_description', 'course__title', 'course__category__title']
     ordering_fields = ['order', 'created_at']
     ordering = ['order']
 
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=True, methods=['get'])
+    def quiz(self, request, pk=None):
+        """Sectiondagi quizni olish va is_accessible tekshirish"""
+        section = self.get_object()
+        quiz = section.quiz_set.first()  # sectiondagi quiz
+        if not quiz:
+            return Response({"detail": "Quiz mavjud emas"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = QuizSerializer(quiz, context={'request': request})
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def submit_quiz(self, request, pk=None):
+        """Quiz javoblarini qabul qilish, ball hisoblash va natijani saqlash"""
+        section = self.get_object()
+        quiz = section.quiz_set.first()
+        if not quiz:
+            return Response({"detail": "Quiz mavjud emas"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Video progresslarni tekshirish
+        videos = section.video_set.all()
+        for video in videos:
+            if not VideoProgress.objects.filter(user=request.user, video=video, is_completed=True).exists():
+                return Response({"detail": "Barcha videolarni ko‘rib bo‘lmaganingiz sababli testga kirish mumkin emas"},
+                                status=status.HTTP_403_FORBIDDEN)
+
+        # QuizSubmitSerializer bilan javoblarni tekshirish
+        serializer = QuizSubmitSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        result = serializer.save(quiz)
+
+        # Agar quiz pass bo‘lsa (60% yoki quiz.pass_percent)
+        if result.percent >= quiz.pass_percent:
+            # SectionProgress update
+            section_progress, _ = SectionProgress.objects.get_or_create(user=request.user, section=section)
+            section_progress.is_completed = True
+            section_progress.completed_at = timezone.now()
+            section_progress.save()
+
+            # Keyingi section ochish
+            next_section = Section.objects.filter(course=section.course, order__gt=section.order).order_by('order').first()
+            if next_section:
+                next_section.is_blocked = False
+                next_section.save()
+
+                # Keyingi sectiondagi birinchi video ham ochilsin
+                first_video = next_section.video_set.order_by('order').first()
+                if first_video:
+                    first_video.is_accessible = True
+                    first_video.save()
+
+        return Response({
+            "total_questions": result.total_questions,
+            "correct_answers": result.correct_answers,
+            "percent": result.percent,
+            "is_passed": result.is_passed,
+            "started_at": result.started_at,
+            "finished_at": result.finished_at,
+        }, status=status.HTTP_200_OK)
 
 from django.utils import timezone
 
@@ -386,10 +447,6 @@ def update_section_progress(user, section):
 
 
 
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 
 class SectionVazifasViewSet(viewsets.ModelViewSet):
     queryset = Section.objects.all()
@@ -490,10 +547,6 @@ class CommentPagination(PageNumberPagination):
     page_size_query_param = 'page_size'  # foydalanuvchi ?page_size=10 bilan o'zgartirishi mumkin
     max_page_size = 50
 
-from rest_framework import viewsets, permissions
-from main_video.models import Comment, VideoRating
-from main_video.serializers import CommentSerializer, VideoRatingSerializer
-
 
 class CommentViewSet(viewsets.ModelViewSet):
     queryset = Comment.objects.all().order_by('-created_at')
@@ -523,9 +576,142 @@ class VideoRatingViewSet(viewsets.ModelViewSet):
 
 
 
+# main_video/views.py
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django.utils import timezone
+
+from main_video.models import Quiz, Question, QuizResult, VideoProgress, Section, SectionProgress
+from main_video.serializers import QuizSubmitSerializer, QuizSerializer
+
+
+class QuizViewSet(viewsets.ViewSet):
+    """Quizga javob yuborish va natijalarni ko‘rish uchun API"""
+
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request):
+        """Userning barcha quiz natijalarini ko‘rsatish"""
+        user = request.user
+        results = QuizResult.objects.filter(user=user).select_related('quiz', 'quiz__section')
+        data = []
+        for r in results:
+            data.append({
+                "quiz_id": r.quiz.id,
+                "section_id": r.quiz.section.id,
+                "section_title": r.quiz.section.title,
+                "total_questions": r.total_questions,
+                "correct_answers": r.correct_answers,
+                "percent": r.percent,
+                "is_passed": r.is_passed,
+                "started_at": r.started_at,
+                "finished_at": r.finished_at,
+            })
+        return Response(data)
+
+    @action(detail=True, methods=['post'])
+    def submit(self, request, pk=None):
+        """Frontenddan quiz javoblarini qabul qilish, ball hisoblash va natijani saqlash"""
+        try:
+            quiz = Quiz.objects.get(id=pk)
+        except Quiz.DoesNotExist:
+            return Response({"detail": "Quiz topilmadi"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Video progresslarni tekshirish: barcha section videolari ko‘rilgan bo‘lishi kerak
+        videos = quiz.section.video_set.all()
+        for video in videos:
+            if not VideoProgress.objects.filter(user=request.user, video=video, is_completed=True).exists():
+                return Response({"detail": "Barcha videolarni ko‘rmaganingiz sababli testga kirish mumkin emas"},
+                                status=status.HTTP_403_FORBIDDEN)
+
+        # Javoblarni serializer orqali tekshirish
+        serializer = QuizSubmitSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        result = serializer.save(quiz)
+
+        # Agar quiz pass bo‘lsa (60% yoki quiz.pass_percent)
+        if result.percent >= quiz.pass_percent:
+            # SectionProgress update
+            section = quiz.section
+            section_progress, _ = SectionProgress.objects.get_or_create(user=request.user, section=section)
+            section_progress.is_completed = True
+            section_progress.completed_at = timezone.now()
+            section_progress.save()
+
+            # Keyingi sectionni ochish
+            next_section = Section.objects.filter(course=section.course, order__gt=section.order).order_by('order').first()
+            if next_section:
+                next_section.is_blocked = False
+                next_section.save()
+
+                # Keyingi sectiondagi birinchi video ham ochilsin
+                first_video = next_section.video_set.order_by('order').first()
+                if first_video:
+                    first_video.is_accessible = True
+                    first_video.save()
+
+        return Response({
+            "quiz_id": quiz.id,
+            "section_id": quiz.section.id,
+            "total_questions": result.total_questions,
+            "correct_answers": result.correct_answers,
+            "percent": result.percent,
+            "is_passed": result.is_passed,
+            "started_at": result.started_at,
+            "finished_at": result.finished_at,
+        })
 
 
 
+# main_video/views.py
+from rest_framework import viewsets, status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
+from main_video.models import QuizResult
 
+class QuizResultViewSet(viewsets.ViewSet):
+    """
+    User o‘ziga tegishli quiz natijalarini ko‘rishi uchun API
+    Filter: ?section=<section_id>
+    """
+    permission_classes = [IsAuthenticated]
 
+    def list(self, request):
+        user = request.user
+
+        # faqat shu userga tegishli natijalar
+        queryset = QuizResult.objects.filter(
+            user=user
+        ).select_related(
+            'quiz',
+            'quiz__section',
+            'quiz__section__course'
+        )
+
+        # 🔹 section bo‘yicha filter
+        section_id = request.query_params.get('section')
+        if section_id:
+            queryset = queryset.filter(quiz__section_id=section_id)
+
+        data = []
+        for r in queryset:
+            data.append({
+                "quiz_id": r.quiz.id,
+                "section_id": r.quiz.section.id,
+                "section_title": r.quiz.section.title,
+                "course_id": r.quiz.section.course.id,
+                "course_title": r.quiz.section.course.title,
+
+                "total_questions": r.total_questions,
+                "correct_answers": r.correct_answers,
+                "percent": r.percent,
+                "is_passed": r.is_passed,
+
+                "started_at": r.started_at,
+                "finished_at": r.finished_at,
+            })
+
+        return Response(data, status=status.HTTP_200_OK)

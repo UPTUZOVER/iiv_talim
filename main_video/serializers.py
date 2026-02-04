@@ -1,18 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from main_video.models import (
-    Users,
-    Category,
-    Course,
-    CourseProgress,
-    Section,
-    SectionProgress,
-    Video,
-    VideoProgress,
-    VideoRating,
-    Missiya,
-    Vazifa_bajarish,
-    Group
+    Users, QuizResult, Question, Quiz,
 )
 
 
@@ -444,25 +433,163 @@ class CategoryWithCoursesSerializer(serializers.ModelSerializer):
         )
         return serializer.data
 
+# =========================
+# Question Serializer
+# =========================
+class QuestionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Question
+        fields = [
+            'id', 'question', 'option1', 'option2', 'option3', 'option4', 'correct_answer'
+        ]
+        read_only_fields = ['correct_answer']  # frontendga javoblar yuborilmasin
+
+    # Frontendga faqat savol va variantlar
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep['options'] = [
+            {'value': '1', 'text': rep.pop('option1')},
+            {'value': '2', 'text': rep.pop('option2')},
+            {'value': '3', 'text': rep.pop('option3')},
+            {'value': '4', 'text': rep.pop('option4')},
+        ]
+        return rep
 
 
+# =========================
+# Quiz Serializer
+# =========================
+class QuizSerializer(serializers.ModelSerializer):
+    questions = QuestionSerializer(many=True, read_only=True)
+    is_accessible = serializers.SerializerMethodField()
+    user_result = serializers.SerializerMethodField()
 
-class SectionOneSerializer(serializers.ModelSerializer):
-    videos = VideosSerializer(source='video_set',many=True, read_only=True)
-    missiyalar = MissiyaOneSerializer(source='missiya_set', many=True, read_only=True)
+    class Meta:
+        model =     Quiz
+        fields = [
+            'id', 'section', 'is_blocked', 'time_limit', 'pass_percent',
+            'questions', 'is_accessible', 'user_result'
+        ]
 
-    category_id = serializers.IntegerField(
-        source='course.category_id',
-        read_only=True
+    def get_is_accessible(self, obj):
+        user = self.context.get('request').user
+        if not user.is_authenticated:
+            return False
+
+        videos = obj.section.video_set.all()
+        for video in videos:
+            if not VideoProgress.objects.filter(user=user, video=video, is_completed=True).exists():
+                return False
+        return True
+
+    def get_user_result(self, obj):
+        user = self.context.get('request').user
+        try:
+            result = QuizResult.objects.get(user=user, quiz=obj)
+            return {
+                'total_questions': result.total_questions,
+                'correct_answers': result.correct_answers,
+                'percent': result.percent,
+                'is_passed': result.is_passed,
+                'started_at': result.started_at,
+                'finished_at': result.finished_at,
+            }
+        except QuizResult.DoesNotExist:
+            return None
+
+
+# =========================
+# Quiz Submit Serializer
+# =========================
+class QuizSubmitSerializer(serializers.Serializer):
+    answers = serializers.ListField(
+        child=serializers.DictField(),  # {'question_id': 1, 'answer': '1'}
+        allow_empty=False
     )
+
+    def validate(self, attrs):
+        if not self.context.get('request').user.is_authenticated:
+            raise serializers.ValidationError("User autentifikatsiya qilinmagan")
+        return attrs
+
+    def save(self, quiz):
+        user = self.context.get('request').user
+        answers = self.validated_data['answers']
+
+        total_questions = quiz.questions.count()
+        correct_answers = 0
+
+        for item in answers:
+            try:
+                question = quiz.questions.get(id=item['question_id'])
+                if str(question.correct_answer) == str(item['answer']):
+                    correct_answers += 1
+            except Question.DoesNotExist:
+                continue
+
+        percent = (correct_answers / total_questions) * 100 if total_questions else 0
+        is_passed = percent >= quiz.pass_percent
+
+        # Quiz natijasini saqlash yoki update
+        result, created = QuizResult.objects.update_or_create(
+            user=user,
+            quiz=quiz,
+            defaults={
+                'total_questions': total_questions,
+                'correct_answers': correct_answers,
+                'percent': percent,
+                'is_passed': is_passed,
+                'started_at': timezone.now() if created else None,
+                'finished_at': timezone.now(),
+            }
+        )
+
+        # Agar quiz o'tilgan bo'lsa, section progress va keyingi section
+        if is_passed:
+            section = quiz.section
+            section_progress, _ = SectionProgress.objects.get_or_create(user=user, section=section)
+            section_progress.is_completed = True
+            section_progress.completed_at = timezone.now()
+            section_progress.save()
+
+            next_section = Section.objects.filter(course=section.course, order__gt=section.order).order_by('order').first()
+            if next_section:
+                next_section.is_blocked = False
+                next_section.save()
+
+        return result
+
+
+# =========================
+# Section Serializer
+# =========================
+class SectionOneSerializer(serializers.ModelSerializer):
+    videos = VideosSerializer(source='video_set', many=True, read_only=True)
+    missiyalar = MissiyaOneSerializer(source='missiyas', many=True, read_only=True)
+    quiz = serializers.SerializerMethodField()
+
+    category_id = serializers.IntegerField(source='course.category_id', read_only=True)
 
     class Meta:
         model = Section
-        fields = ["id","category_id", "title","course", "order","small_description", "is_blocked","videos","missiyalar"]
+        fields = [
+            "id", "category_id", "title", "course", "order",
+            "small_description", "is_blocked", "videos", "missiyalar", "quiz"
+        ]
+
+    def get_quiz(self, obj):
+        request = self.context.get('request')
+        quiz = getattr(obj, 'quiz', None)  # related_name bo'yicha
+        if quiz:
+            serializer = QuizSerializer(quiz, context={'request': request})
+            return serializer.data
+        return None
 
 
 class VazifaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Vazifa_bajarish
         fields = ['id', 'missiya', "user",'description', 'file', 'is_approved', 'score']
+
+
 

@@ -24,7 +24,6 @@ class UsersAdmin(UserAdmin):
         }),
     )
 
-
 # ----------------------------
 # Inline klasslar
 # ----------------------------
@@ -33,22 +32,27 @@ class SectionInline(admin.TabularInline):
     extra = 1
     show_change_link = True
 
-
 class VideoInline(admin.TabularInline):
     model = Video
     extra = 1
     show_change_link = True
-
 
 class MissiyaInline(admin.TabularInline):
     model = Missiya
     extra = 1
     show_change_link = True
 
+class QuestionInline(admin.TabularInline):
+    model = Question
+    extra = 1
+    show_change_link = True
 
-# ----------------------------
-# Course admin
-# ----------------------------
+class QuizResultInline(admin.TabularInline):
+    model = QuizResult
+    extra = 0
+    readonly_fields = ('total_questions', 'correct_answers', 'percent', 'is_passed', 'started_at', 'finished_at')
+    can_delete = False
+    show_change_link = True
 
 # ----------------------------
 # Section admin
@@ -61,20 +65,21 @@ class SectionAdmin(admin.ModelAdmin):
     ordering = ('course', 'order')
     inlines = [VideoInline, MissiyaInline]
 
-
+# ----------------------------
+# Course admin
+# ----------------------------
 @admin.register(Course)
 class CourseAdmin(admin.ModelAdmin):
     list_display = ('title', 'get_teachers', 'category', 'is_blocked', 'created_at')
     list_filter = ('is_blocked', 'category')
     search_fields = ('title', 'teacher__hemis_id')
-    inlines = [SectionInline]  # <-- Shu yerda Section qo‘shildi
+    inlines = [SectionInline]
 
     def get_teachers(self, obj):
-        return ", ".join(
-            [f"{t.first_name} {t.last_name}" for t in obj.teacher.all()]
-        )
-    get_teachers.short_description = "Teacherlar"
+        return ", ".join([f"{t.first_name} {t.last_name}" for t in obj.teacher.all()])
+    get_teachers.short_description = "Teachers"
 
+# ----------------------------
 # Video admin
 # ----------------------------
 @admin.register(Video)
@@ -83,7 +88,6 @@ class VideoAdmin(admin.ModelAdmin):
     list_filter = ('is_blocked', 'section__course')
     search_fields = ('title', 'section__title')
     ordering = ('section', 'order')
-
 
 # ----------------------------
 # Missiya admin
@@ -99,7 +103,6 @@ class MissiyaAdmin(admin.ModelAdmin):
         return ''
     description_preview.short_description = 'Description'
 
-
 # ----------------------------
 # VazifaBajarish admin
 # ----------------------------
@@ -109,7 +112,6 @@ class VazifaBajarishAdmin(admin.ModelAdmin):
     list_filter = ('created_at', 'user__group')
     search_fields = ('user__hemis_id', 'missiya__section__title')
 
-
 # ----------------------------
 # CourseProgress admin
 # ----------------------------
@@ -118,7 +120,6 @@ class CourseProgressAdmin(admin.ModelAdmin):
     list_display = ('user', 'course', 'progress_percent', 'is_completed', 'completed_at')
     list_filter = ('is_completed', 'course', 'user__group')
     search_fields = ('user__hemis_id', 'course__title')
-
 
 # ----------------------------
 # SectionProgress admin
@@ -133,7 +134,6 @@ class SectionProgressAdmin(admin.ModelAdmin):
         return obj.section.title
     get_section.short_description = 'Section'
 
-
 # ----------------------------
 # VideoProgress admin
 # ----------------------------
@@ -147,11 +147,6 @@ class VideoProgressAdmin(admin.ModelAdmin):
         return obj.video.title
     get_video.short_description = 'Video'
 
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        return qs.select_related('user', 'video', 'video__section', 'video__section__course')
-
-
 # ----------------------------
 # VideoRating admin
 # ----------------------------
@@ -160,7 +155,6 @@ class VideoRatingAdmin(admin.ModelAdmin):
     list_display = ("id",'video', 'user', 'rating', 'created_at')
     list_filter = ('rating',)
     search_fields = ('video__title', 'user__hemis_id')
-
 
 # ----------------------------
 # Comment admin
@@ -175,7 +169,6 @@ class CommentAdmin(admin.ModelAdmin):
         return obj.comment[:50] + '...' if len(obj.comment) > 50 else obj.comment
     comment_preview.short_description = 'Comment'
 
-
 # ----------------------------
 # Category admin
 # ----------------------------
@@ -184,7 +177,6 @@ class CategoryAdmin(admin.ModelAdmin):
     list_display = ('title', 'created_at')
     search_fields = ('title',)
 
-
 # ----------------------------
 # Group admin
 # ----------------------------
@@ -192,3 +184,14 @@ class CategoryAdmin(admin.ModelAdmin):
 class GroupAdmin(admin.ModelAdmin):
     list_display = ('name',)
     search_fields = ('name',)
+
+# ----------------------------
+# Quiz admin with inline Questions & QuizResults
+# ----------------------------
+@admin.register(Quiz)
+class QuizAdmin(admin.ModelAdmin):
+    list_display = ("id",'section', 'is_blocked', 'pass_percent', 'time_limit')
+    list_filter = ('is_blocked', 'section__course')
+    search_fields = ('section__title',)
+    inlines = [QuestionInline, QuizResultInline]
+
