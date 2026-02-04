@@ -404,12 +404,13 @@ class CourseWithProgressSerializer(serializers.ModelSerializer):
 
     def get_average_video_rating(self, obj):
         """Kursdagi barcha videolarning o'rtacha ratingini hisoblash"""
-        # Kursga tegishli barcha videolar
         videos = Video.objects.filter(section__course=obj)
-        avg = videos.aggregate(avg_rating=Avg('videorating__rating'))['avg_rating']
+        # related_name bo‘yicha to‘g‘riladik
+        avg = videos.aggregate(avg_rating=Avg('ratings__rating'))['avg_rating']
         if avg is None:
             return 0
         return round(avg, 2)
+
 
 
 class CategoryWithCoursesSerializer(serializers.ModelSerializer):
