@@ -563,10 +563,12 @@ class QuizSubmitSerializer(serializers.Serializer):
 
 # =========================
 # Section Serializer
+
+# =========================
+# Section serializer
 # =========================
 class SectionOneSerializer(serializers.ModelSerializer):
     videos = VideosSerializer(source='video_set', many=True, read_only=True)
-    missiyalar = MissiyaOneSerializer(source='missiyas', many=True, read_only=True)
     quiz = serializers.SerializerMethodField()
 
     category_id = serializers.IntegerField(source='course.category_id', read_only=True)
@@ -574,17 +576,25 @@ class SectionOneSerializer(serializers.ModelSerializer):
     class Meta:
         model = Section
         fields = [
-            "id", "category_id", "title", "course", "order",
-            "small_description", "is_blocked", "videos", "missiyalar", "quiz"
+            "id",
+            "category_id",
+            "title",
+            "course",
+            "order",
+            "small_description",
+            "is_blocked",
+            "videos",
+            "quiz",
         ]
 
     def get_quiz(self, obj):
         request = self.context.get('request')
-        quiz = getattr(obj, 'quiz', None)  # related_name bo'yicha
+        quiz = getattr(obj, 'quiz', None)  # OneToOneField orqali
         if quiz:
             serializer = QuizSerializer(quiz, context={'request': request})
             return serializer.data
         return None
+
 
 
 class VazifaSerializer(serializers.ModelSerializer):
