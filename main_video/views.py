@@ -365,10 +365,13 @@ class SectionOneViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Quiz mavjud emas"}, status=status.HTTP_404_NOT_FOUND)
 
         # Video progresslarni tekshirish
-        videos = section.video_set.all()
-        for video in videos:
-            if not VideoProgress.objects.filter(user=request.user, video=video, is_completed=True).exists():
-                return Response({"detail": "Barcha videolarni ko‘rib bo‘lmaganingiz sababli testga kirish mumkin emas"},
+        videos = section.video_set.order_by('order')
+        for idx, video in enumerate(videos):
+            if idx == 0:
+                continue  # birinchi video avtomatik ruxsat
+            previous_video = videos[idx - 1]
+            if not VideoProgress.objects.filter(user=request.user, video=previous_video, is_completed=True).exists():
+                return Response({"detail": "Avvalgi videolarni ko‘rmaganingiz sababli testga kirish mumkin emas"},
                                 status=status.HTTP_403_FORBIDDEN)
 
         # QuizSubmitSerializer bilan javoblarni tekshirish

@@ -155,17 +155,20 @@ class Video(models.Model):
     def check_video_access(self, user):
         if user.role in ['admin', 'teacher']:
             return True
+
         section_videos = Video.objects.filter(section=self.section).order_by('order')
         if not section_videos.exists():
             return False
+
         first_video = section_videos.first()
         if self.id == first_video.id:
-            return True
-        if VideoProgress.objects.filter(user=user, video=self, is_completed=True).exists():
-            return True
+            return True  # birinchi video har doim ochiq
+
+        # avvalgi videoni tekshirish
         previous_video = section_videos.filter(order__lt=self.order).order_by('-order').first()
         if not previous_video:
             return False
+
         return VideoProgress.objects.filter(user=user, video=previous_video, is_completed=True).exists()
 
 
