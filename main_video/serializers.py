@@ -187,17 +187,68 @@ class CategorySerializer(serializers.ModelSerializer):
 
 
 
+
 class CategoryMainSerializer(serializers.ModelSerializer):
+    average_rating = serializers.SerializerMethodField()  # 🆕 qo'shildi
 
     class Meta:
         model = Category
-        fields = ['id', 'title', 'img', 'created_at', 'updated_at']
+        fields = ['id', 'title', 'img', 'created_at', 'updated_at', 'average_rating']  # 🆕 qo‘shildi
 
+    def get_average_rating(self, obj):
+        """Kategoriyadagi barcha kurslarning umumiy o'rtacha ratingi"""
+        courses = Course.objects.filter(category=obj)
+
+        if not courses.exists():
+            return 0
+
+        # Barcha kurslardagi barcha videolarning ratinglarini yig'ish
+        all_ratings = []
+        for course in courses:
+            videos = Video.objects.filter(section__course=course)
+            for video in videos:
+                ratings = VideoRating.objects.filter(video=video).values_list('rating', flat=True)
+                all_ratings.extend(ratings)
+
+        if not all_ratings:
+            return 0
+
+        # O'rtacha hisoblash
+        average = sum(all_ratings) / len(all_ratings)
+        return round(average, 2)
 
 class CourseMainSerializer(serializers.ModelSerializer):
+    average_rating = serializers.SerializerMethodField()  # 🆕
+
     class Meta:
         model = Course
-        fields = "__all__"
+        fields = [
+            "title", "category", "img", "author", "video",
+            "is_blocked", "small_description", "created_at",
+            "updated_at", "average_rating"  # 🆕 qo‘shildi
+        ]
+
+    def get_average_rating(self, obj):
+        """Kursning umumiy o'rtacha ratingi"""
+        # Videolarni olish
+        videos = Video.objects.filter(section__course=obj)
+
+        if not videos.exists():
+            return 0
+
+        # Barcha ratinglarni yig'ish
+        all_ratings = []
+        for video in videos:
+            ratings = VideoRating.objects.filter(video=video).values_list('rating', flat=True)
+            all_ratings.extend(ratings)
+
+        if not all_ratings:
+            return 0
+
+        average = sum(all_ratings) / len(all_ratings)
+        return round(average, 2)
+
+
 # -----------------------------
 # COURSE PROGRESS SERIALIZER
 # -----------------------------
@@ -253,6 +304,7 @@ class VideosSerializer(serializers.ModelSerializer):
     is_accessible = serializers.SerializerMethodField()
     user_progress = serializers.SerializerMethodField()
     average_rating = serializers.SerializerMethodField()  # 🆕 yangi field
+    user_rating = serializers.SerializerMethodField()  # ✅ QO‘SHILDI
 
     class Meta:
         model = Video
@@ -265,10 +317,23 @@ class VideosSerializer(serializers.ModelSerializer):
             'order',
             'is_accessible',
             'user_progress',
-            'average_rating',     # 🆕 qo‘shildi
+            'user_rating',  # ✅ QO‘SHILDI
+            'average_rating',
             'created_at',
             'updated_at'
         ]
+
+    def get_user_rating(self, obj):
+            request = self.context.get('request')
+            if not request or not request.user.is_authenticated:
+                return None
+
+            rating = VideoRating.objects.filter(
+                video=obj,
+                user=request.user
+            ).first()
+
+            return rating.rating if rating else None
 
     def get_is_accessible(self, obj):
         request = self.context.get('request')
@@ -457,9 +522,6 @@ class QuestionSerializer(serializers.ModelSerializer):
         return rep
 
 
-# =========================
-# Quiz Serializer
-# =========================
 class QuizSerializer(serializers.ModelSerializer):
     questions = QuestionSerializer(many=True, read_only=True)
     is_accessible = serializers.SerializerMethodField()
