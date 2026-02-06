@@ -205,7 +205,7 @@ class CategoryMainSerializer(serializers.ModelSerializer):
         # Barcha kurslardagi barcha videolarning ratinglarini yig'ish
         all_ratings = []
         for course in courses:
-            videos = Video.objects.filter(section__course=course)
+            videos = Video.objects.filter(  section__course=course)
             for video in videos:
                 ratings = VideoRating.objects.filter(video=video).values_list('rating', flat=True)
                 all_ratings.extend(ratings)
@@ -217,15 +217,16 @@ class CategoryMainSerializer(serializers.ModelSerializer):
         average = sum(all_ratings) / len(all_ratings)
         return round(average, 2)
 
+
 class CourseMainSerializer(serializers.ModelSerializer):
-    average_rating = serializers.SerializerMethodField()  # 🆕
+    average_rating = serializers.SerializerMethodField()
 
     class Meta:
         model = Course
         fields = [
-            "title", "category", "img", "author", "video",
+            "id","title", "category", "img", "author", "video",
             "is_blocked", "small_description", "created_at",
-            "updated_at", "average_rating"  # 🆕 qo‘shildi
+            "updated_at", "average_rating"
         ]
 
     def get_average_rating(self, obj):
@@ -274,16 +275,19 @@ class SectionProgressSerializer(serializers.ModelSerializer):
         fields = ['id', 'user', 'section', 'is_completed', 'completed_at']
 
 
-
 class VideoProgressSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
-    video = VideoSerializer(source='Section',
-                            read_only=True)  # sizning modelda maydon nomi Section, shuning uchun source='Section'
+    video = VideoSerializer(read_only=True)
 
     class Meta:
         model = VideoProgress
         fields = ['id', 'user', 'video', 'is_completed', 'completed_at']
+        read_only_fields = ['user', 'video']
 
+    def create(self, validated_data):
+        # Avtomatik user ni qo'shish
+        validated_data['user'] = self.context['request'].user
+        return super().create(validated_data)
 
 # serializers.py ga qo'shimcha
 
@@ -602,7 +606,7 @@ class QuizSubmitSerializer(serializers.Serializer):
                 'correct_answers': correct_answers,
                 'percent': percent,
                 'is_passed': is_passed,
-                'started_at': timezone.now() if created else None,
+                'started_at': None,
                 'finished_at': timezone.now(),
             }
         )

@@ -329,6 +329,40 @@ from rest_framework.permissions import IsAuthenticated
 from main_video.models import Section, Quiz, Video, VideoProgress, QuizResult, SectionProgress
 from main_video.serializers import SectionOneSerializer, QuizSubmitSerializer, QuizSerializer
 
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
+
+from main_video.models import Section, Quiz, Video, VideoProgress, QuizResult, SectionProgress, Missiya
+from main_video.serializers import (
+    SectionOneSerializer,
+    QuizSubmitSerializer,
+    QuizSerializer,
+    VideosSerializer,
+    MissiyaOneSerializer
+)
+
+
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
+
+from main_video.models import Section, Quiz, Video, VideoProgress, QuizResult, SectionProgress, Missiya
+from main_video.serializers import (
+    SectionOneSerializer,
+    QuizSubmitSerializer,
+    QuizSerializer,
+    VideosSerializer,
+    MissiyaOneSerializer
+)
 
 class SectionOneViewSet(viewsets.ModelViewSet):
     queryset = Section.objects.select_related('course', 'course__category')
@@ -349,7 +383,10 @@ class SectionOneViewSet(viewsets.ModelViewSet):
     def quiz(self, request, pk=None):
         """Sectiondagi quizni olish va is_accessible tekshirish"""
         section = self.get_object()
-        quiz = section.quiz_set.first()  # sectiondagi quiz
+
+        # ✅ TO'G'RI: OneToOneField uchun related_name='quiz' bo'lsa
+        quiz = section.quiz  # section.quiz_set emas, section.quiz
+
         if not quiz:
             return Response({"detail": "Quiz mavjud emas"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -360,43 +397,57 @@ class SectionOneViewSet(viewsets.ModelViewSet):
     def submit_quiz(self, request, pk=None):
         """Quiz javoblarini qabul qilish, ball hisoblash va natijani saqlash"""
         section = self.get_object()
-        quiz = section.quiz_set.first()
+
+        # ✅ TO'G'RI: OneToOneField uchun related_name='quiz' bo'lsa
+        quiz = section.quiz  # section.quiz_set emas, section.quiz
+
         if not quiz:
             return Response({"detail": "Quiz mavjud emas"}, status=status.HTTP_404_NOT_FOUND)
 
         # Video progresslarni tekshirish
-        videos = section.video_set.order_by('order')
+        videos = Video.objects.filter(section=section).order_by('order')  # ✅ section.video_set emas
+
         for idx, video in enumerate(videos):
             if idx == 0:
                 continue  # birinchi video avtomatik ruxsat
             previous_video = videos[idx - 1]
             if not VideoProgress.objects.filter(user=request.user, video=previous_video, is_completed=True).exists():
-                return Response({"detail": "Avvalgi videolarni ko‘rmaganingiz sababli testga kirish mumkin emas"},
-                                status=status.HTTP_403_FORBIDDEN)
+                return Response({
+                    "detail": "Avvalgi videolarni ko'rmaganingiz sababli testga kirish mumkin emas",
+                    "required_video_id": previous_video.id,
+                    "required_video_title": previous_video.title
+                }, status=status.HTTP_403_FORBIDDEN)
 
         # QuizSubmitSerializer bilan javoblarni tekshirish
         serializer = QuizSubmitSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         result = serializer.save(quiz)
 
-        # Agar quiz pass bo‘lsa (60% yoki quiz.pass_percent)
+        # Agar quiz pass bo'lsa (60% yoki quiz.pass_percent)
         if result.percent >= quiz.pass_percent:
             # SectionProgress update
-            section_progress, _ = SectionProgress.objects.get_or_create(user=request.user, section=section)
+            section_progress, _ = SectionProgress.objects.get_or_create(
+                user=request.user,
+                section=section
+            )
             section_progress.is_completed = True
             section_progress.completed_at = timezone.now()
             section_progress.save()
 
             # Keyingi section ochish
-            next_section = Section.objects.filter(course=section.course, order__gt=section.order).order_by('order').first()
+            next_section = Section.objects.filter(
+                course=section.course,
+                order__gt=section.order
+            ).order_by('order').first()
+
             if next_section:
                 next_section.is_blocked = False
                 next_section.save()
 
                 # Keyingi sectiondagi birinchi video ham ochilsin
-                first_video = next_section.video_set.order_by('order').first()
+                first_video = Video.objects.filter(section=next_section).order_by('order').first()
                 if first_video:
-                    first_video.is_accessible = True
+                    first_video.is_blocked = False  # ✅ is_accessible emas, is_blocked
                     first_video.save()
 
         return Response({
@@ -404,10 +455,176 @@ class SectionOneViewSet(viewsets.ModelViewSet):
             "correct_answers": result.correct_answers,
             "percent": result.percent,
             "is_passed": result.is_passed,
+            "pass_percent_required": quiz.pass_percent,
             "started_at": result.started_at,
             "finished_at": result.finished_at,
+            "message": "Test muvaffaqiyatli topshirildi" if result.is_passed else "Testdan o'tolmadingiz"
         }, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['get'])
+    def check_quiz_status(self, request, pk=None):
+        """Quiz holatini tekshirish"""
+        section = self.get_object()
+
+        try:
+            quiz = section.quiz
+
+            # Video progresslarini tekshirish
+            videos = Video.objects.filter(section=section).order_by('order')
+            required_videos = []
+            all_watched = True
+
+            for idx, video in enumerate(videos):
+                if idx == 0:
+                    continue
+                previous_video = videos[idx - 1]
+                if not VideoProgress.objects.filter(user=request.user, video=previous_video, is_completed=True).exists():
+                    all_watched = False
+                    required_videos.append({
+                        "id": previous_video.id,
+                        "title": previous_video.title,
+                        "order": previous_video.order
+                    })
+
+            # Oldingi natijani tekshirish
+            try:
+                previous_result = QuizResult.objects.get(user=request.user, quiz=quiz)
+                has_previous_result = True
+                previous_score = previous_result.percent
+                previous_passed = previous_result.is_passed
+            except QuizResult.DoesNotExist:
+                has_previous_result = False
+                previous_score = None
+                previous_passed = False
+
+            return Response({
+                "quiz_exists": True,
+                "quiz_id": quiz.id,
+                "can_take_quiz": all_watched,
+                "all_videos_watched": all_watched,
+                "required_videos": required_videos if not all_watched else [],
+                "has_previous_result": has_previous_result,
+                "previous_score": previous_score,
+                "previous_passed": previous_passed,
+                "pass_percent": quiz.pass_percent
+            })
+
+        except AttributeError:
+            return Response({
+                "quiz_exists": False,
+                "can_take_quiz": False,
+                "message": "Bu section uchun quiz mavjud emas"
+            })
+
+    @action(detail=True, methods=['get'])
+    def videos(self, request, pk=None):
+        """Sectiondagi videolarni access bilan olish"""
+        section = self.get_object()
+        videos = Video.objects.filter(section=section).order_by('order')
+
+        video_data = []
+        for video in videos:
+            has_access = video.check_video_access(request.user)
+            progress = VideoProgress.objects.filter(user=request.user, video=video).first()
+
+            video_data.append({
+                'id': video.id,
+                'title': video.title,
+                'order': video.order,
+                'has_access': has_access,
+                'is_completed': progress.is_completed if progress else False,
+                'completed_at': progress.completed_at if progress else None,
+                'is_blocked': video.is_blocked,
+                'small_description': video.small_description,
+                'video_file': video.video_file.url if video.video_file else None
+            })
+
+        return Response(video_data)
+
+    @action(detail=True, methods=['get'])
+    def missiyalar(self, request, pk=None):
+        """Sectiondagi missiyalarni olish"""
+        section = self.get_object()
+        missiyalar = Missiya.objects.filter(section=section)
+
+        serializer = MissiyaOneSerializer(missiyalar, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def progress(self, request, pk=None):
+        """Section uchun user progressini olish"""
+        section = self.get_object()
+        user = request.user
+
+        try:
+            section_progress = SectionProgress.objects.get(user=user, section=section)
+            return Response({
+                'is_completed': section_progress.is_completed,
+                'completed_at': section_progress.completed_at,
+                'score_percent': section_progress.score_percent
+            })
+        except SectionProgress.DoesNotExist:
+            return Response({
+                'is_completed': False,
+                'completed_at': None,
+                'score_percent': 0
+            })
+
+    @action(detail=True, methods=['get'])
+    def full_info(self, request, pk=None):
+        """Section to'liq ma'lumotlari"""
+        section = self.get_object()
+
+        # Asosiy ma'lumotlar
+        section_serializer = self.get_serializer(section)
+        data = section_serializer.data
+
+        # Videolar
+        videos = Video.objects.filter(section=section).order_by('order')
+        video_serializer = VideosSerializer(videos, many=True, context={'request': request})
+        data['videos_with_access'] = video_serializer.data
+
+        # Quiz holati
+        try:
+            quiz = section.quiz
+            data['has_quiz'] = True
+            data['quiz_id'] = quiz.id
+
+            # Quizga kirish huquqi
+            all_watched = True
+            for idx, video in enumerate(videos):
+                if idx == 0:
+                    continue
+                previous_video = videos[idx - 1]
+                if not VideoProgress.objects.filter(user=request.user, video=previous_video, is_completed=True).exists():
+                    all_watched = False
+                    break
+            data['quiz_accessible'] = all_watched
+        except AttributeError:
+            data['has_quiz'] = False
+            data['quiz_accessible'] = False
+
+        # Missiyalar
+        missiyalar = Missiya.objects.filter(section=section)
+        missiya_serializer = MissiyaOneSerializer(missiyalar, many=True)
+        data['missiyalar'] = missiya_serializer.data
+
+        # Progress
+        try:
+            section_progress = SectionProgress.objects.get(user=request.user, section=section)
+            data['user_progress'] = {
+                'is_completed': section_progress.is_completed,
+                'completed_at': section_progress.completed_at,
+                'score_percent': section_progress.score_percent
+            }
+        except SectionProgress.DoesNotExist:
+            data['user_progress'] = {
+                'is_completed': False,
+                'completed_at': None,
+                'score_percent': 0
+            }
+
+        return Response(data)
 from django.utils import timezone
 
 
