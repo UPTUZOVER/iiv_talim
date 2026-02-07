@@ -606,7 +606,6 @@ class QuizSubmitSerializer(serializers.Serializer):
                 'correct_answers': correct_answers,
                 'percent': percent,
                 'is_passed': is_passed,
-                'started_at': None,
                 'finished_at': timezone.now(),
             }
         )

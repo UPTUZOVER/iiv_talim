@@ -142,10 +142,13 @@ class CategoryViewSet(viewsets.ModelViewSet):
         return context
 
 
+from django.db import transaction
+
+
 class VideoViewSet(viewsets.ModelViewSet):
     queryset = Video.objects.all()
     serializer_class = VideosSerializer
-    permission_classes = [permissions.IsAuthenticated]  # Faqat avtorizatsiyalangan userlar
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -155,61 +158,127 @@ class VideoViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def mark_as_watched(self, request, pk=None):
         """User videoni ko'rib bo'ldi deb belgilaydi"""
-        video = self.get_object()
-        user = request.user
+        try:
+            video = self.get_object()
+            user = request.user
 
-        # Video'ga kirish huquqini tekshirish
-        if not video.check_video_access(user):
+            # Video'ga kirish huquqini tekshirish
+            if not video.check_video_access(user):
+                return Response({
+                    'success': False,
+                    'error': 'Bu videoni ko‘rish huquqingiz yo‘q. Avval oldingi videoni ko‘rib bo‘lishingiz kerak.'
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Transaction bilan birga saqlash
+            with transaction.atomic():
+                # VideoProgressni yangilash yoki yaratish
+                video_progress, created = VideoProgress.objects.update_or_create(
+                    user=user,
+                    video=video,
+                    defaults={
+                        'is_completed': True,
+                        'completed_at': timezone.now()
+                    }
+                )
+
+                # Section progressni yangilash
+                section = video.section
+                videos_in_section = Video.objects.filter(section=section)
+                completed_videos = VideoProgress.objects.filter(
+                    user=user,
+                    video__in=videos_in_section,
+                    is_completed=True
+                ).count()
+
+                progress_percent = (
+                                               completed_videos / videos_in_section.count()) * 100 if videos_in_section.count() > 0 else 0
+
+                section_progress, _ = SectionProgress.objects.update_or_create(
+                    user=user,
+                    section=section
+                )
+                section_progress.score_percent = progress_percent
+                section_progress.save()
+
+                # Course progressni yangilash
+                course = section.course
+                sections_in_course = Section.objects.filter(course=course)
+                completed_sections = SectionProgress.objects.filter(
+                    user=user,
+                    section__in=sections_in_course,
+                    is_completed=True
+                ).count()
+
+                course_progress_percent = (
+                                                      completed_sections / sections_in_course.count()) * 100 if sections_in_course.count() > 0 else 0
+
+                course_progress, _ = CourseProgress.objects.update_or_create(
+                    user=user,
+                    course=course,
+                    defaults={
+                        'progress_percent': course_progress_percent,
+                        'is_completed': course_progress_percent >= 100
+                    }
+                )
+
+            next_video = video.get_next_video()
+
             return Response({
-                'error': 'Bu videoni ko‘rish huquqingiz yo‘q. Avval oldingi videoni ko‘rib bo‘lishingiz kerak.'
-            }, status=status.HTTP_403_FORBIDDEN)
+                'success': True,
+                'message': 'Video muvaffaqiyatli ko‘rib bo‘ldingiz',
+                'data': {
+                    'video_id': video.id,
+                    'video_title': video.title,
+                    'is_completed': True,
+                    'completed_at': timezone.now().isoformat(),
+                    'section_progress': progress_percent,
+                    'course_progress': course_progress_percent,
+                    'next_video': {
+                        'id': next_video.id if next_video else None,
+                        'title': next_video.title if next_video else None,
+                        'has_access': next_video.check_video_access(user) if next_video else False
+                    } if next_video else None
+                }
+            })
 
-        # VideoProgressni yangilash yoki yaratish
-        progress, created = VideoProgress.objects.get_or_create(
-            user=user,
-            video=video,
-            defaults={'is_completed': True, 'completed_at': timezone.now()}
-        )
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        if not created:
-            progress.is_completed = True
-            progress.completed_at = timezone.now()
-            progress.save()
+    @action(detail=True, methods=['post'])
+    def mark_as_unwatched(self, request, pk=None):
+        """Videoni ko'rilmagan deb belgilash"""
+        try:
+            video = self.get_object()
+            user = request.user
 
-        next_video = video.get_next_video()
+            # VideoProgress ni o'chirish
+            VideoProgress.objects.filter(user=user, video=video).delete()
 
-        self._update_section_progress(user, video.section)
+            # Progresslarni yangilash
+            section = video.section
+            self._update_section_progress(user, section)
+            self._update_course_progress(user, section.course)
 
-        self._update_course_progress(user, video.section.course)
+            return Response({
+                'success': True,
+                'message': 'Video ko‘rilmagan deb belgilandi'
+            })
 
-        return Response({
-            'success': True,
-            'message': 'Video ko‘rib bo‘ldi',
-            'video_id': video.id,
-            'next_video_id': next_video.id if next_video and next_video.check_video_access(user) else None,
-            'next_video_title': next_video.title if next_video and next_video.check_video_access(user) else None
-        })
-
-    @action(detail=True, methods=['get'])
-    def check_access(self, request, pk=None):
-        video = self.get_object()
-        user = request.user
-
-        has_access = video.check_video_access(user)
-        next_video = video.get_next_video() if has_access else None
-
-        serializer = VideoAccessSerializer({
-            'has_access': has_access,
-            'message': 'Mavjud' if has_access else 'Bloklangan',
-            'next_video_id': next_video.id if next_video and next_video.check_video_access(user) else None
-        })
-
-        return Response(serializer.data)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def _update_section_progress(self, user, section):
-
         videos = Video.objects.filter(section=section)
         total_videos = videos.count()
+
+        if total_videos == 0:
+            return
 
         completed_videos = VideoProgress.objects.filter(
             user=user,
@@ -218,42 +287,43 @@ class VideoViewSet(viewsets.ModelViewSet):
         ).count()
 
         progress_percent = math.floor((completed_videos / total_videos) * 100) if total_videos > 0 else 0
-        is_completed = progress_percent == 100
 
         section_progress, _ = SectionProgress.objects.get_or_create(
             user=user,
             section=section
         )
 
-        section_progress.is_completed = is_completed
-        if is_completed and not section_progress.completed_at:
-            section_progress.completed_at = timezone.now()
+        section_progress.score_percent = progress_percent
         section_progress.save()
 
     def _update_course_progress(self, user, course):
         sections = Section.objects.filter(course=course)
         total_sections = sections.count()
 
-        completed_sections = SectionProgress.objects.filter(
-            user=user,
-            section__in=sections,
-            is_completed=True
-        ).count()
+        if total_sections == 0:
+            return
+
+        completed_sections = 0
+        for section in sections:
+            try:
+                section_progress = SectionProgress.objects.get(user=user, section=section)
+                if section_progress.score_percent >= 100:  # 100% progress bo'lsa
+                    completed_sections += 1
+            except SectionProgress.DoesNotExist:
+                pass
 
         progress_percent = math.floor((completed_sections / total_sections) * 100) if total_sections > 0 else 0
-        is_completed = progress_percent == 100
+        is_completed = progress_percent >= 100
 
-        course_progress, _ = CourseProgress.objects.get_or_create(
+        course_progress, _ = CourseProgress.objects.update_or_create(
             user=user,
-            course=course
+            course=course,
+            defaults={
+                'progress_percent': progress_percent,
+                'is_completed': is_completed,
+                'completed_at': timezone.now() if is_completed else None
+            }
         )
-
-        course_progress.progress_percent = progress_percent
-        course_progress.is_completed = is_completed
-        if is_completed and not course_progress.completed_at:
-            course_progress.completed_at = timezone.now()
-        course_progress.save()
-
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -604,7 +674,6 @@ class SectionOneViewSet(viewsets.ModelViewSet):
             data['has_quiz'] = False
             data['quiz_accessible'] = False
 
-        # Missiyalar
         missiyalar = Missiya.objects.filter(section=section)
         missiya_serializer = MissiyaOneSerializer(missiyalar, many=True)
         data['missiyalar'] = missiya_serializer.data
@@ -625,22 +694,17 @@ class SectionOneViewSet(viewsets.ModelViewSet):
             }
 
         return Response(data)
-from django.utils import timezone
 
 
 def can_start_vazifalar(user, section):
-    """Section vazifalarini ishlash uchun shart:
-    - Sectiondagi -1 indexdagi video ko‘rilgan bo‘lishi kerak
-    """
+
     last_video = Video.objects.filter(section=section).order_by('order').first()
     if not last_video:
         return False
-    # user ushbu videoni ko‘rgan bo‘lishi kerak
     return VideoProgress.objects.filter(user=user, video=last_video, is_completed=True).exists()
 
 
 def update_section_progress(user, section):
-    """Sectiondagi vazifalar progressini hisoblash"""
     vazifalar = Vazifa_bajarish.objects.filter(missiya__section=section)
     total_vazifalar = vazifalar.values('missiya').distinct().count()
 
@@ -784,7 +848,6 @@ class RatingPagination(PageNumberPagination):
     max_page_size = 50
 
 
-
 class VideoRatingViewSet(viewsets.ModelViewSet):
     queryset = VideoRating.objects.all()
     serializer_class = VideoRatingSerializer
@@ -793,13 +856,51 @@ class VideoRatingViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['video']
 
+    def get_queryset(self):
+        """Faqat joriy userga tegishli ratinglar"""
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if user.is_authenticated:
+            # Faqat o'zining ratinglarini ko'rsatish
+            return queryset.filter(user=user)
+        return queryset.none()
+
+    def create(self, request, *args, **kwargs):
+        """Rating yaratish/yangilash"""
+        video_id = request.data.get('video')
+
+        if not video_id:
+            return Response(
+                {"detail": "Video ID kiritilmagan"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            video = Video.objects.get(id=video_id)
+        except Video.DoesNotExist:
+            return Response(
+                {"detail": "Video topilmadi"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Mavjud ratingni tekshirish
+        rating, created = VideoRating.objects.update_or_create(
+            user=request.user,
+            video=video,
+            defaults={'rating': request.data.get('rating')}
+        )
+
+        serializer = self.get_serializer(rating)
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        )
 
 
-
-# main_video/views.py
-from rest_framework import viewsets, status
+from rest_framework import viewsets
 from rest_framework.decorators import action
-from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 
@@ -808,7 +909,6 @@ from main_video.serializers import QuizSubmitSerializer, QuizSerializer
 
 
 class QuizViewSet(viewsets.ViewSet):
-    """Quizga javob yuborish va natijalarni ko‘rish uchun API"""
 
     permission_classes = [IsAuthenticated]
 
@@ -893,10 +993,7 @@ from rest_framework.response import Response
 from main_video.models import QuizResult
 
 class QuizResultViewSet(viewsets.ViewSet):
-    """
-    User o‘ziga tegishli quiz natijalarini ko‘rishi uchun API
-    Filter: ?section=<section_id>
-    """
+
     permission_classes = [IsAuthenticated]
 
     def list(self, request):
