@@ -196,13 +196,11 @@ class CategoryMainSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'img', 'created_at', 'updated_at', 'average_rating']  # 🆕 qo‘shildi
 
     def get_average_rating(self, obj):
-        """Kategoriyadagi barcha kurslarning umumiy o'rtacha ratingi"""
         courses = Course.objects.filter(category=obj)
 
         if not courses.exists():
             return 0
 
-        # Barcha kurslardagi barcha videolarning ratinglarini yig'ish
         all_ratings = []
         for course in courses:
             videos = Video.objects.filter(  section__course=course)
