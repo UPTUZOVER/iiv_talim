@@ -244,8 +244,48 @@ class QuizResult(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        unique_together = ('user', 'quiz')
 
     def __str__(self):
         return f"{self.user.hemis_id} - {self.quiz.section.title} - {self.percent}%"
+
+
+
+
+
+
+
+
+
+
+# =========================
+# CERTIFICATE MODEL
+# =========================
+class Certificate(models.Model):
+    user = models.ForeignKey(Users, on_delete=models.CASCADE, related_name='certificates')
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='certificates')
+    category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True)
+    completed_at = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'course')  # bir user faqat bir marta sertifikat oladi
+
+    def __str__(self):
+        return f"{self.user.hemis_id} - {self.course.title} - {self.completed_at.date()}"
+
+    @property
+    def student_name(self):
+        return f"{self.user.first_name} {self.user.last_name}"
+
+    @property
+    def course_title(self):
+        return self.course.title
+
+    @property
+    def category_title(self):
+        return self.category.title if self.category else None
+
+    @property
+    def teacher_names(self):
+        teachers = self.course.teacher.all()
+        return ", ".join([f"{teacher.first_name} {teacher.last_name}" for teacher in teachers])

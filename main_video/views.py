@@ -1,17 +1,27 @@
-from rest_framework import status, filters
-from rest_framework.decorators import action
+
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.pagination import PageNumberPagination
 from rest_framework_simplejwt.views import TokenObtainPairView
 
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
+
+
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import filters
 from django_filters.rest_framework import DjangoFilterBackend
 
 import math
 
 from main_video.models import *
 from main_video.serializers import (
+    CertificateSerializer,
     MyTokenObtainPairSerializer,
     UserModelSerializer,
     CourseWithProgressSerializer,
@@ -22,7 +32,8 @@ from main_video.serializers import (
     SectionVazifaSerializer,
     VazifaSerializer,
     VideoProgressSerializer,
-    CommentSerializer
+    CommentSerializer,
+    MissiyaOneSerializer
 )
 
 from .serializers import VideosSerializer, VideoAccessSerializer, CourseMainSerializer
@@ -154,6 +165,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         context = super().get_serializer_context()
         context['request'] = self.request
         return context
+
 
     @action(detail=True, methods=['post'])
     def mark_as_watched(self, request, pk=None):
@@ -296,6 +308,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         section_progress.score_percent = progress_percent
         section_progress.save()
 
+
     def _update_course_progress(self, user, course):
         sections = Section.objects.filter(course=course)
         total_sections = sections.count()
@@ -387,52 +400,7 @@ class CourseViewSet(viewsets.ModelViewSet):
                 'completed_at': None
             })
 
-# main_video/views.py
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from django.utils import timezone
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import filters
-from rest_framework.permissions import IsAuthenticated
 
-from main_video.models import Section, Quiz, Video, VideoProgress, QuizResult, SectionProgress
-from main_video.serializers import SectionOneSerializer, QuizSubmitSerializer, QuizSerializer
-
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from django.utils import timezone
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import filters
-
-from main_video.models import Section, Quiz, Video, VideoProgress, QuizResult, SectionProgress, Missiya
-from main_video.serializers import (
-    SectionOneSerializer,
-    QuizSubmitSerializer,
-    QuizSerializer,
-    VideosSerializer,
-    MissiyaOneSerializer
-)
-
-
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from django.utils import timezone
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import filters
-
-from main_video.models import Section, Quiz, Video, VideoProgress, QuizResult, SectionProgress, Missiya
-from main_video.serializers import (
-    SectionOneSerializer,
-    QuizSubmitSerializer,
-    QuizSerializer,
-    VideosSerializer,
-    MissiyaOneSerializer
-)
 
 class SectionOneViewSet(viewsets.ModelViewSet):
     queryset = Section.objects.select_related('course', 'course__category')
@@ -666,14 +634,34 @@ class SectionOneViewSet(viewsets.ModelViewSet):
                 if idx == 0:
                     continue
                 previous_video = videos[idx - 1]
-                if not VideoProgress.objects.filter(user=request.user, video=previous_video, is_completed=True).exists():
+                if not VideoProgress.objects.filter(user=request.user, video=previous_video,
+                                                    is_completed=True).exists():
                     all_watched = False
                     break
             data['quiz_accessible'] = all_watched
+
+            # ✅ Barcha urinishlarni olish
+            all_results = QuizResult.objects.filter(user=request.user, quiz=quiz).order_by('-percent', 'finished_at')
+            # eng yuqori natija birinchi, qolganlari tartibini saqlab beradi
+            data['quiz_results'] = [
+                {
+                    'id': r.id,
+                    'total_questions': r.total_questions,
+                    'correct_answers': r.correct_answers,
+                    'percent': r.percent,
+                    'is_passed': r.is_passed,
+                    'started_at': getattr(r, 'started_at', None),
+                    'finished_at': r.finished_at
+                }
+                for r in all_results
+            ]
+
         except AttributeError:
             data['has_quiz'] = False
             data['quiz_accessible'] = False
+            data['quiz_results'] = []
 
+        # Missiyalar
         missiyalar = Missiya.objects.filter(section=section)
         missiya_serializer = MissiyaOneSerializer(missiyalar, many=True)
         data['missiyalar'] = missiya_serializer.data
@@ -986,11 +974,6 @@ class QuizViewSet(viewsets.ViewSet):
 
 
 # main_video/views.py
-from rest_framework import viewsets, status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-
-from main_video.models import QuizResult
 
 class QuizResultViewSet(viewsets.ViewSet):
 
@@ -1032,3 +1015,109 @@ class QuizResultViewSet(viewsets.ViewSet):
             })
 
         return Response(data, status=status.HTTP_200_OK)
+
+
+
+
+
+@receiver(post_save, sender=SectionProgress)
+def create_certificate_on_course_completion(sender, instance, created, **kwargs):
+
+    user = instance.user
+    course = instance.section.course
+
+    # Kursdagi barcha sectionlar soni
+    total_sections = course.section_set.count()
+
+    # User tomonidan tugatilgan sectionlar soni
+    completed_sections = SectionProgress.objects.filter(
+        user=user,
+        section__course=course,
+        is_completed=True
+    ).count()
+
+    # Agar barcha sectionlar tugatilgan bo‘lsa va sertifikat hali yo‘q bo‘lsa
+    if total_sections > 0 and completed_sections == total_sections:
+        if not Certificate.objects.filter(user=user, course=course).exists():
+            Certificate.objects.create(
+                user=user,
+                course=course,
+                category=course.category,
+                completed_at=timezone.now()
+            )
+            print(f"Sertifikat avtomatik yaratildi: {user.hemis_id} - {course.title}")
+
+class CertificateFilter(django_filters.FilterSet):
+    category = django_filters.NumberFilter(field_name='category_id')
+    course = django_filters.NumberFilter(field_name='course__id')
+    user = django_filters.NumberFilter(field_name='user__id')
+
+    class Meta:
+        model = Certificate
+        fields = ['category', 'course', 'user']
+
+
+
+class CertificateViewSet(viewsets.ModelViewSet):
+    serializer_class = CertificateSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_class = CertificateFilter
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+
+    search_fields = ['course__title', 'category__title']
+    ordering_fields = ['completed_at', 'course__title']
+    ordering = ['-completed_at']
+
+    def get_queryset(self):
+        return Certificate.objects.filter(user=self.request.user).select_related('course', 'category', 'user')
+
+    # =========================
+    # check_course action uchun swagger
+    check_course_param = openapi.Parameter(
+        'course_id', openapi.IN_QUERY, description="Course ID", type=openapi.TYPE_INTEGER
+    )
+
+    @swagger_auto_schema(
+        method='get',
+        manual_parameters=[check_course_param],
+        responses={200: CertificateSerializer(many=False)}
+    )
+    @action(detail=False, methods=['get'])
+    def check_course(self, request):
+        course_id = request.query_params.get('course_id')
+        if not course_id:
+            return Response({'error': 'course_id kiritilishi kerak'}, status=400)
+
+        try:
+            course = Course.objects.get(id=course_id)
+        except Course.DoesNotExist:
+            return Response({'error': 'Course topilmadi'}, status=404)
+
+        user = request.user
+        has_certificate = Certificate.objects.filter(user=user, course=course).exists()
+        total_sections = course.section_set.count()
+        completed_sections = SectionProgress.objects.filter(
+            user=user, section__course=course, is_completed=True
+        ).count()
+
+        can_get_certificate = (total_sections > 0 and completed_sections == total_sections) and not has_certificate
+
+        return Response({
+            'course_id': course.id,
+            'course_title': course.title,
+            'has_certificate': has_certificate,
+            'can_get_certificate': can_get_certificate,
+            'completed_sections': completed_sections,
+            'total_sections': total_sections
+        })
+
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter('category', openapi.IN_QUERY, description="Category ID", type=openapi.TYPE_INTEGER),
+            openapi.Parameter('course', openapi.IN_QUERY, description="Course ID", type=openapi.TYPE_INTEGER),
+            openapi.Parameter('user', openapi.IN_QUERY, description="User ID", type=openapi.TYPE_INTEGER),
+        ]
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+

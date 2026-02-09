@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from main_video.models import (
-    Users, QuizResult, Question, Quiz,
+    Users, QuizResult, Question, Quiz, Certificate
 )
 
 
@@ -201,6 +201,7 @@ class CategoryMainSerializer(serializers.ModelSerializer):
         if not courses.exists():
             return 0
 
+        # Barcha kurslardagi barcha videolarning ratinglarini yig'ish
         all_ratings = []
         for course in courses:
             videos = Video.objects.filter(  section__course=course)
@@ -218,13 +219,14 @@ class CategoryMainSerializer(serializers.ModelSerializer):
 
 class CourseMainSerializer(serializers.ModelSerializer):
     average_rating = serializers.SerializerMethodField()
+    has_certificate = serializers.SerializerMethodField()  # 🆕 QO‘SHILDI
 
     class Meta:
         model = Course
         fields = [
             "id","title", "category", "img", "author", "video",
             "is_blocked", "small_description", "created_at",
-            "updated_at", "average_rating"
+            "updated_at", "average_rating","has_certificate"
         ]
 
     def get_average_rating(self, obj):
@@ -248,7 +250,17 @@ class CourseMainSerializer(serializers.ModelSerializer):
         return round(average, 2)
 
 
-# -----------------------------
+    def get_has_certificate(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+
+        return Certificate.objects.filter(
+            user=request.user,
+            course=obj
+        ).exists()
+
+# -----------------------------zz
 # COURSE PROGRESS SERIALIZER
 # -----------------------------
 class CourseProgressSerializer(serializers.ModelSerializer):
@@ -666,4 +678,83 @@ class VazifaSerializer(serializers.ModelSerializer):
         fields = ['id', 'missiya', "user",'description', 'file', 'is_approved', 'score']
 
 
+# ----------------------------
+# CERTIFICATE SERIALIZERS
+# ----------------------------
+class CertificateSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    course_title = serializers.CharField(source='course.title', read_only=True)
+    category_title = serializers.CharField(source='category.title', read_only=True)
+    teacher_names = serializers.SerializerMethodField(read_only=True)
 
+    class Meta:
+        model = Certificate
+        fields = [
+            'id',
+            'user',
+            'course',
+            'category',
+            'student_name',
+            'course_title',
+            'category_title',
+            'teacher_names',
+            'completed_at',
+            'created_at'
+        ]
+        read_only_fields = ['user', 'course', 'category', 'completed_at']
+
+    def get_teacher_names(self, obj):
+        teachers = obj.course.teacher.all()
+        return ", ".join([f"{teacher.first_name} {teacher.last_name}" for teacher in teachers])
+
+
+class CertificateGenerateSerializer(serializers.Serializer):
+    course_id = serializers.IntegerField()
+
+    def validate(self, data):
+        user = self.context['request'].user
+        course_id = data['course_id']
+
+        # Course tekshirish
+        try:
+            course = Course.objects.get(id=course_id)
+        except Course.DoesNotExist:
+            raise serializers.ValidationError("Course topilmadi")
+
+        # Kurs progressini tekshirish (100% bo'lishi kerak)
+        try:
+            course_progress = CourseProgress.objects.get(
+                user=user,
+                course=course
+            )
+            if course_progress.progress_percent < 100:
+                raise serializers.ValidationError("Kursni tugatmadingiz")
+        except CourseProgress.DoesNotExist:
+            raise serializers.ValidationError("Kursni boshlaganingiz yo'q")
+
+        # Sertifikat allaqachon mavjudligini tekshirish
+        if Certificate.objects.filter(user=user, course=course).exists():
+            raise serializers.ValidationError("Siz allaqachon bu kurs uchun sertifikat olgansiz")
+
+        data['user'] = user
+        data['course'] = course
+        return data
+
+    def create(self, validated_data):
+        user = validated_data['user']
+        course = validated_data['course']
+
+        # Course progress orqali tugatilgan vaqtni olish
+        try:
+            course_progress = CourseProgress.objects.get(user=user, course=course)
+            completed_at = course_progress.completed_at or timezone.now()
+        except CourseProgress.DoesNotExist:
+            completed_at = timezone.now()
+
+        certificate = Certificate.objects.create(
+            user=user,
+            course=course,
+            category=course.category,
+            completed_at=completed_at
+        )
+        return certificate

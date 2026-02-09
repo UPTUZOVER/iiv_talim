@@ -2,8 +2,8 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from .models import *
 
-# ----------------------------
-# Users admin
+
+admin.site.register(Certificate)# Users admin
 # ----------------------------
 @admin.register(Users)
 class UsersAdmin(UserAdmin):
@@ -195,3 +195,7 @@ class QuizAdmin(admin.ModelAdmin):
     search_fields = ('section__title',)
     inlines = [QuestionInline, QuizResultInline]
 
+
+@admin.register(QuizResult)
+class QuizResult(admin.ModelAdmin):
+    list_filter = ('finished_at', 'completed_at')
