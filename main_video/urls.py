@@ -43,6 +43,7 @@ router.register(r'comments', CommentViewSet, basename='comments')
 router.register(r'ratings', VideoRatingViewSet, basename='rating')
 router.register(r'quiz', QuizViewSet, basename='quiz'),
 router.register(r'quiz-results', QuizResultViewSet, basename='quiz-results')
+router.register(r'certificates', CertificateViewSet, basename='certificate')
 
 router.register(r'certificates', CertificateViewSet, basename='certificates')
 
