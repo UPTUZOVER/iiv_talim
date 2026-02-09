@@ -6,6 +6,9 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.pagination import PageNumberPagination
 from rest_framework_simplejwt.views import TokenObtainPairView
 
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
+
 from django_filters.rest_framework import DjangoFilterBackend
 
 import math
@@ -1032,3 +1035,110 @@ class QuizResultViewSet(viewsets.ViewSet):
             })
 
         return Response(data, status=status.HTTP_200_OK)
+
+
+
+
+
+
+@receiver(post_save, sender=SectionProgress)
+def create_certificate_on_course_completion(sender, instance, created, **kwargs):
+
+    user = instance.user
+    course = instance.section.course
+
+    # Kursdagi barcha sectionlar soni
+    total_sections = course.section_set.count()
+
+    # User tomonidan tugatilgan sectionlar soni
+    completed_sections = SectionProgress.objects.filter(
+        user=user,
+        section__course=course,
+        is_completed=True
+    ).count()
+
+    # Agar barcha sectionlar tugatilgan bo‘lsa va sertifikat hali yo‘q bo‘lsa
+    if total_sections > 0 and completed_sections == total_sections:
+        if not Certificate.objects.filter(user=user, course=course).exists():
+            Certificate.objects.create(
+                user=user,
+                course=course,
+                category=course.category,
+                completed_at=timezone.now()
+            )
+            print(f"Sertifikat avtomatik yaratildi: {user.hemis_id} - {course.title}")
+
+class CertificateFilter(django_filters.FilterSet):
+    category = django_filters.NumberFilter(field_name='category_id')
+    course = django_filters.NumberFilter(field_name='course__id')
+    user = django_filters.NumberFilter(field_name='user__id')
+
+    class Meta:
+        model = Certificate
+        fields = ['category', 'course', 'user']
+
+
+
+class CertificateViewSet(viewsets.ModelViewSet):
+    serializer_class = CertificateSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_class = CertificateFilter
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+
+    search_fields = ['course__title', 'category__title']
+    ordering_fields = ['completed_at', 'course__title']
+    ordering = ['-completed_at']
+
+    def get_queryset(self):
+        return Certificate.objects.filter(user=self.request.user).select_related('course', 'category', 'user')
+
+    # =========================
+    # check_course action uchun swagger
+    check_course_param = openapi.Parameter(
+        'course_id', openapi.IN_QUERY, description="Course ID", type=openapi.TYPE_INTEGER
+    )
+
+    @swagger_auto_schema(
+        method='get',
+        manual_parameters=[check_course_param],
+        responses={200: CertificateSerializer(many=False)}
+    )
+    @action(detail=False, methods=['get'])
+    def check_course(self, request):
+        course_id = request.query_params.get('course_id')
+        if not course_id:
+            return Response({'error': 'course_id kiritilishi kerak'}, status=400)
+
+        try:
+            course = Course.objects.get(id=course_id)
+        except Course.DoesNotExist:
+            return Response({'error': 'Course topilmadi'}, status=404)
+
+        user = request.user
+        has_certificate = Certificate.objects.filter(user=user, course=course).exists()
+        total_sections = course.section_set.count()
+        completed_sections = SectionProgress.objects.filter(
+            user=user, section__course=course, is_completed=True
+        ).count()
+
+        can_get_certificate = (total_sections > 0 and completed_sections == total_sections) and not has_certificate
+
+        return Response({
+            'course_id': course.id,
+            'course_title': course.title,
+            'has_certificate': has_certificate,
+            'can_get_certificate': can_get_certificate,
+            'completed_sections': completed_sections,
+            'total_sections': total_sections
+        })
+
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter('category', openapi.IN_QUERY, description="Category ID", type=openapi.TYPE_INTEGER),
+            openapi.Parameter('course', openapi.IN_QUERY, description="Course ID", type=openapi.TYPE_INTEGER),
+            openapi.Parameter('user', openapi.IN_QUERY, description="User ID", type=openapi.TYPE_INTEGER),
+        ]
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
